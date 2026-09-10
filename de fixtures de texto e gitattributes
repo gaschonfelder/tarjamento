@@ -1,0 +1,21 @@
+ .gitattributes                                     |  2 [32m+[m
+ .gitignore                                         |  5 [32m++[m
+ tests/fixtures/textos/doc_teste_1_MEI.txt          | 32 [32m++++++++++++[m
+ .../textos/doc_teste_1_PJ_representante.txt        | 17 [32m+++++++[m
+ tests/fixtures/textos/doc_teste_1_assinatura.txt   | 21 [32m++++++++[m
+ tests/fixtures/textos/doc_teste_1_ata.txt          | 21 [32m++++++++[m
+ tests/fixtures/textos/doc_teste_1_contrato.txt     | 19 [32m+++++++[m
+ .../fixtures/textos/doc_teste_1_cpf_irregular.txt  | 58 [32m++++++++++++++++++++++[m
+ tests/fixtures/textos/doc_teste_1_cpf_quebrado.txt | 24 [32m+++++++++[m
+ .../textos/doc_teste_1_dados_bancarios.txt         | 36 [32m++++++++++++++[m
+ .../fixtures/textos/doc_teste_1_dados_diversos.txt | 49 [32m++++++++++++++++++[m
+ tests/fixtures/textos/doc_teste_1_edital.txt       | 31 [32m++++++++++++[m
+ tests/fixtures/textos/doc_teste_1_oficio.txt       | 29 [32m+++++++++++[m
+ tests/fixtures/textos/doc_teste_1_rescisao.txt     | 14 [32m++++++[m
+ tests/fixtures/textos/doc_teste_1_tabela.txt       | 29 [32m+++++++++++[m
+ .../fixtures/textos/doc_teste_1_texto_corrido.txt  |  7 [32m+++[m
+ tests/fixtures/textos/gitattributes.txt            |  2 [32m+[m
+ tests/fixtures/textos/negativo_administrativos.txt | 45 [32m+++++++++++++++++[m
+ tests/fixtures/textos/negativo_ambiguos.txt        | 22 [32m++++++++[m
+ tests/fixtures/textos/negativo_armadilhas.txt      | 19 [32m+++++++[m
+ 20 files changed, 482 insertions(+)

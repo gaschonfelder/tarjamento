@@ -2,11 +2,11 @@ MASSA DE TESTE – MEI E EMPRESÁRIO INDIVIDUAL
 
 CASO 1 – MICROEMPREENDEDOR INDIVIDUAL (MEI)
 
-CONTRATADA: MARCOS VINICIUS PEREIRA 52998224725, Microempreendedor Individual – MEI, inscrito no CNPJ sob o nº 27.865.432/0001-10, CPF nº 529.982.247-25, com sede na Rua das Palmeiras, nº 245, Jardim Central, Sorocaba/SP, CEP 18040-120.
+CONTRATADA: MARCOS VINICIUS PEREIRA 52998224725, Microempreendedor Individual – MEI, inscrito no CNPJ sob o nº 27.865.432/0001-11, CPF nº 529.982.247-25, com sede na Rua das Palmeiras, nº 245, Jardim Central, Sorocaba/SP, CEP 18040-120.
 
 Razão Social: MARCOS VINICIUS PEREIRA 52998224725
 Nome Fantasia: MP SERVIÇOS DIGITAIS
-CNPJ: 27.865.432/0001-10
+CNPJ: 27.865.432/0001-11
 CPF do titular: 529.982.247-25
 Natureza: Microempreendedor Individual – MEI
 
@@ -16,11 +16,11 @@ Valor contratado: R$ 18.450,00
 
 CASO 2 – EMPRESÁRIO INDIVIDUAL
 
-CONTRATADA: RENATO ALVES FERREIRA, Empresário Individual, inscrito no CNPJ nº 41.258.963/0001-47, CPF nº 111.444.777-35, estabelecido na Avenida Central, nº 850, sala 04, Sorocaba/SP, CEP 18035-210.
+CONTRATADA: RENATO ALVES FERREIRA, Empresário Individual, inscrito no CNPJ nº 41.258.963/0001-77, CPF nº 111.444.777-35, estabelecido na Avenida Central, nº 850, sala 04, Sorocaba/SP, CEP 18035-210.
 
 Empresário: RENATO ALVES FERREIRA
 CPF: 111.444.777-35
-CNPJ: 41.258.963/0001-47
+CNPJ: 41.258.963/0001-77
 Natureza Jurídica: Empresário (Individual)
 
 O empresário declara atuar em nome próprio no exercício da atividade empresarial.
