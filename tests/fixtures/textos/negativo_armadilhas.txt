@@ -1,0 +1,19 @@
+MASSA DE TESTE – ARMADILHAS DE VALIDAÇÃO
+
+As sequências abaixo PASSAM na validação de dígito verificador de CPF,
+mas não são dados pessoais. Só o contexto distingue.
+
+Espera-se que os detectores da Fase 1 falhem aqui. Este arquivo é o
+registro da limitação, não um teste de regressão.
+
+Código interno: 52998224725-A
+Código patrimonial: 11144477735
+Número de série: 529-982-247-25
+Código de rastreamento: BR52998224725SP
+Total de registros processados: 52998224725
+Identificador do lote: 12345678909
+Chave de integração: 98765432100
+
+Observação: nenhuma dessas sequências vem precedida de rótulo pessoal
+(CPF, inscrito no CPF, portador do CPF). O rótulo imediatamente anterior
+é sempre administrativo.

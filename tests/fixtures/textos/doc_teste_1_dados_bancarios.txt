@@ -1,0 +1,36 @@
+DADOS PARA PAGAMENTO
+
+Favorecido: MARCELO HENRIQUE DE ALMEIDA
+CPF: 529.982.247-25
+Banco: Banco Exemplo S.A.
+Código do Banco: 999
+Agência: 1847-3
+Conta Corrente: 00284715-9
+Tipo de conta: Conta Corrente
+
+Chave PIX (CPF): 529.982.247-25
+
+Favorecida: JULIANA CRISTINA FERREIRA
+CPF: 111.444.777-35
+Banco: Instituição Financeira Exemplo
+Agência: 0001
+Conta: 847291-5
+Chave PIX (e-mail): juliana.ferreira@example.com
+
+Favorecido: CARLOS EDUARDO MARTINS
+CPF: 123.456.789-09
+Banco: Banco Digital Exemplo
+Agência: 0001
+Conta Corrente: 9182746-2
+Chave PIX (telefone): +55 (15) 99842-7316
+
+Favorecida: FERNANDA OLIVEIRA SOUZA
+CPF: 987.654.321-00
+Banco: Banco Exemplo
+Agência: 2845-7
+Conta: 00018472-3
+Chave PIX aleatória: 550e8400-e29b-41d4-a716-446655440000
+
+VALOR DO PAGAMENTO: R$ 18.742,50
+EMPENHO: 4587/2026
+PROCESSO: 18.742/2026

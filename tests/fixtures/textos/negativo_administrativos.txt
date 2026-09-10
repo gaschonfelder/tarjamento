@@ -1,0 +1,45 @@
+MASSA DE TESTE – NÚMEROS ADMINISTRATIVOS
+
+Nenhum dos números abaixo é dado pessoal. Qualquer detecção neste
+arquivo é falso positivo grave.
+
+Valor do contrato: R$ 1.234.567,89
+Valor mensal: R$ 48.920,37
+Valor unitário: R$ 127,54
+
+Nota de Empenho: 2026NE004587
+Empenho nº 4587/2026
+
+Processo Administrativo nº 18.742/2026
+Processo nº 2026/004587-3
+Protocolo nº 2026.09.08.001842
+
+Pregão Eletrônico nº 047/2026
+Concorrência nº 012/2026
+Dispensa de Licitação nº 118/2026
+Código da licitação: PE-047/2026
+
+Lote: 03
+Item: 17
+Quantidade: 1.250 unidades
+
+Prazo de entrega: 45 dias
+Prazo contratual: 12 meses
+Percentual de desconto: 17,35%
+Percentual máximo de reajuste: 4,82%
+
+Data de abertura: 08/09/2026
+Horário da sessão: 09h30
+Exercício orçamentário: 2026
+
+Dotação orçamentária: 04.122.7001.2001.3.3.90.39.00
+Ficha orçamentária: 184
+
+Lei Municipal nº 12.845/2024
+Lei Federal nº 14.133/2021
+Decreto nº 31.289/2026
+Portaria nº 458/2026
+
+Contrato nº 103/2026
+Ata de Registro de Preços nº 027/2026
+Ordem de Serviço nº 000184/2026

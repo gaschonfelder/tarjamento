@@ -1,0 +1,19 @@
+CONTRATO ADMINISTRATIVO Nº 047/2026
+
+PROCESSO ADMINISTRATIVO Nº 18.742/2026
+
+Pelo presente instrumento, de um lado, a FUNDAÇÃO MUNICIPAL DE DESENVOLVIMENTO, inscrita no CNPJ sob o nº 46.634.044/0001-74, com sede administrativa na Avenida das Instituições, nº 450, Centro, Sorocaba/SP, CEP 18035-000, doravante denominada CONTRATANTE, e, de outro lado, MARCELO HENRIQUE DE ALMEIDA, brasileiro, casado, engenheiro civil, portador da Cédula de Identidade RG nº 42.815.739-6 SSP/SP, inscrito no CPF sob o nº 529.982.247-25, residente e domiciliado na Rua das Acácias, nº 184, apartamento 32, Jardim Europa, Sorocaba/SP, CEP 18045-310, telefone (15) 99842-7316, e-mail marcelo.almeida@example.com, doravante denominado CONTRATADO, resolvem celebrar o presente contrato.
+
+CLÁUSULA PRIMEIRA – DO OBJETO
+
+O presente contrato tem por objeto a prestação de serviços técnicos especializados de engenharia, conforme condições estabelecidas no Processo Administrativo nº 18.742/2026.
+
+CLÁUSULA SEGUNDA – DO VALOR
+
+O valor global do presente contrato é de R$ 184.750,00 (cento e oitenta e quatro mil, setecentos e cinquenta reais).
+
+CLÁUSULA TERCEIRA – DO PRAZO
+
+O prazo de execução será de 180 (cento e oitenta) dias, contados da emissão da ordem de serviço.
+
+Sorocaba, 8 de setembro de 2026.

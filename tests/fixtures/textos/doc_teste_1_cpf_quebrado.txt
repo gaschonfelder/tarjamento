@@ -1,0 +1,24 @@
+TESTE DE QUEBRA DE LINHA
+
+MARCELO HENRIQUE DE ALMEIDA, brasileiro, engenheiro, inscrito no CPF sob o nº 529.982.
+247-25, residente e domiciliado no Município de Sorocaba/SP.
+
+Outro exemplo:
+
+JULIANA CRISTINA FERREIRA, inscrita no CPF nº 111.
+444.777-35, declara verdadeiras as informações apresentadas.
+
+Quebra após hífen:
+
+CARLOS EDUARDO MARTINS, CPF 123.456.789-
+09, representante legal da contratada.
+
+Quebra sem pontuação:
+
+FERNANDA OLIVEIRA SOUZA, CPF nº 987654
+32100, declara estar de acordo com os termos.
+
+Quebra com espaço:
+
+RICARDO ALVES PEREIRA, CPF nº 529 982
+247 25, firma o presente instrumento.

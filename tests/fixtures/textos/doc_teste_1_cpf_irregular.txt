@@ -1,0 +1,58 @@
+TESTES DE NORMALIZAÇÃO
+
+CPF com pontuação:
+529.982.247-25
+
+CPF sem pontuação:
+52998224725
+
+CPF com espaços:
+529 982 247 25
+
+CPF com separadores irregulares:
+529-982-247.25
+
+CPF precedido de rótulo:
+CPF:52998224725
+
+CPF com espaço no rótulo:
+CPF : 529.982.247-25
+
+CPF com nº:
+CPF nº 529.982.247-25
+
+Telefone:
+(15) 99842-7316
+
+Telefone:
+15 99842 7316
+
+Telefone:
+15998427316
+
+Telefone:
++55 15 99842-7316
+
+Telefone:
++55 (15) 99842 7316
+
+CEP:
+18045-310
+
+CEP:
+18045310
+
+E-mail:
+marcelo.almeida@example.com
+
+E-mail com letras maiúsculas:
+MARCELO.ALMEIDA@EXAMPLE.COM
+
+RG:
+42.815.739-6
+
+RG:
+428157396
+
+RG com órgão:
+42.815.739-6 SSP/SP

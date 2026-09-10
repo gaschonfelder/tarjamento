@@ -1,0 +1,29 @@
+RELAÇÃO DE PARTICIPANTES
+
+NOME                              CPF
+Marcelo Henrique de Almeida       529.982.247-25
+Juliana Cristina Ferreira         111.444.777-35
+Carlos Eduardo Martins            123.456.789-09
+Fernanda Oliveira Souza           987.654.321-00
+
+NOME                    CPF                  FUNÇÃO
+Ricardo Alves Pereira   529.982.247-25       Representante
+Mariana Costa Lima      111.444.777-35       Procuradora
+Paulo Roberto Mendes    123.456.789-09       Testemunha
+
+NOME                         CPF
+Gabriela Santos Rocha              987.654.321-00
+Lucas Henrique Moraes     529.982.247-25
+Beatriz Almeida       111.444.777-35
+Renato Ferreira da Silva                  123.456.789-09
+
+NOME;CPF;LOTE;VALOR
+Marcelo Henrique de Almeida;529.982.247-25;03;R$ 18.450,00
+Juliana Cristina Ferreira;111.444.777-35;04;R$ 27.819,50
+
+NOME        CPF
+Marcos
+Antônio da Silva        529.982.247-25
+
+Patrícia Fernanda
+de Oliveira                  111.444.777-35

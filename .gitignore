@@ -8,3 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
+
+*.pdf
+tests/fixtures/reais/
+.pytest_cache/
+teste_manual.py

@@ -1,0 +1,22 @@
+MASSA DE TESTE – CASOS AMBÍGUOS
+
+O tratamento correto destes casos depende de decisão do órgão, não do
+detector. Registrado aqui para forçar a decisão explícita.
+
+IP do equipamento: 192.168.10.247
+IP de acesso à sessão eletrônica: 189.45.201.33
+
+Coordenada interna do projeto: 23.529982 / 47.247250
+Coordenada geográfica da obra: -23.5015, -47.4526
+
+Versão do sistema: 10.24.7.25
+Build: 2026.09.08.001842
+
+MAC do equipamento: 00:1A:2B:3C:4D:5E
+
+Pendências de decisão:
+- IP privado (192.168.x.x) nunca identifica pessoa; IP público pode.
+  Tratar diferente?
+- Coordenada de obra é informação pública do contrato; coordenada de
+  residência não. O detector consegue distinguir?
+- IP e geolocalização foram adiados no escopo da Fase 1.
