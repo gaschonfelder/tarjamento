@@ -101,8 +101,8 @@ def tesseract_disponivel() -> bool:
 def localizar_tessdata() -> Path | None:
     """Pasta de idiomas em espaço de usuário, quando o Tesseract não a acharia.
 
-    Se ``TESSDATA_PREFIX`` está definida, o próprio Tesseract a usa e aqui não
-    há o que fazer. Senão, ``%LOCALAPPDATA%\\tessdata`` — o lugar que o README
+    Se ``TESSDATA_PREFIX`` já está definida, o próprio Tesseract a usa e aqui
+    não há o que fazer. Senão, ``%LOCALAPPDATA%\\tessdata`` — o lugar que o README
     indica para o ``por.traineddata`` quando não se pode escrever na pasta
     do instalador, que fica em ``Program Files`` e exige elevação.
     """
@@ -235,6 +235,13 @@ class TesseractEngine:
             # a biblioteca funciona, entao e aqui que ele tem de ser posto.
             pytesseract.pytesseract.tesseract_cmd = comando
         self.tessdata_dir = Path(tessdata_dir) if tessdata_dir else localizar_tessdata()
+        if self.tessdata_dir is not None:
+            # E assim que o proprio Tesseract pede para receber a pasta de
+            # idiomas. Passar --tessdata-dir pela string de config nao serve:
+            # o pytesseract repassa aspas literais ao binario, e um caminho
+            # sem aspas quebra ao primeiro espaco. Variavel de ambiente nao
+            # tem nenhum dos dois problemas.
+            os.environ["TESSDATA_PREFIX"] = str(self.tessdata_dir)
 
     def __repr__(self) -> str:
         return (
@@ -244,11 +251,9 @@ class TesseractEngine:
 
     @property
     def config(self) -> str:
-        """A linha de opções passada ao binário."""
-        partes = [f"--psm {self.psm}"]
-        if self.tessdata_dir is not None:
-            partes.append(f'--tessdata-dir "{self.tessdata_dir}"')
-        return " ".join(partes)
+        """A linha de opções passada ao binário. A pasta de idiomas vai por
+        ``TESSDATA_PREFIX``, não por aqui — veja ``__init__``."""
+        return f"--psm {self.psm}"
 
     def extract_text(self, imagem: Image.Image) -> PageExtraction:
         if _em_branco(imagem):
