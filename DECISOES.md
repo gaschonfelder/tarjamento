@@ -90,3 +90,47 @@ escondeu o problema do item 3 até ele ser testado com células posicionadas.
 Testar só contra PDF gerado pelo projeto pode, portanto, mascarar esse tipo
 de falha. Isso reforça a necessidade de **validar contra PDF real do FUNSERV
 (com dado fictício)** antes de considerar a Fase 2 encerrada.
+
+### 6. Primeiro teste com PDF real
+
+Documento: `FUNSERV_Ata_Conselho_Fiscal_DADOS_FICTICIOS_TESTE.pdf` — ata de
+conselho fiscal com estrutura real do FUNSERV e dados fictícios, 4 páginas.
+Fica em `tests/fixtures/pdf_manual/`, pasta **fora do controle de versão**
+(coberta pelo `*.pdf` do `.gitignore`); o relatório abaixo é o registro do
+que se viu, já que o arquivo não acompanha o repositório.
+
+**Resultado.** `process_pdf` com todos os detectores da Fase 1 devolveu
+**17 entidades corretas — 10 CPF e 7 EMAIL —, zero falso positivo e zero
+falso negativo** nos padrões esperados. Os sete CPFs no formato
+`(email, CPF 529.982.247-25)` saíram ancorados (`context='CPF'`, 0.99); os
+e-mails, todos os sete, detectados. Foram corretamente ignorados: os três
+nomes em texto corrido (ainda não há detector de NOME), os IPs `192.0.2.x`,
+as coordenadas `-23.5000 / -47.4500`, o hash SHA-256 de 64 caracteres e o
+identificador `TESTE-FUNSERV-2026-0001`. Páginas 1 e 2 sem nenhuma marca.
+
+**Limitação identificada — mesma categoria do cabeçalho de coluna (item 4).**
+A janela de âncora só enxerga a própria linha de texto (ou a anterior, quando
+o valor abre a linha). Dois padrões de documento real ficam fora do alcance
+de qualquer detector que dependa **só de âncora**, e não de DV:
+
+- **cabeçalho de coluna** — rótulo numa linha, valores nas linhas abaixo;
+- **bloco de assinatura** — nome numa linha, identificador sozinho na linha
+  seguinte, sem rótulo nenhum. Foi o caso dos três CPFs restantes desta ata
+  (`Assinatura fictícia` / `Nome do signatário` / `168.995.350-09`), que
+  saíram com 0.95 e sem `context`.
+
+CPF é resistente a isso porque tem DV e não depende de âncora para ser
+aceito — os três do bloco de assinatura foram detectados normalmente. RG,
+CNH e outros tipos sem DV forte, se aparecerem nesse padrão, **não seriam
+detectados hoje**. Fica como pendência para quando o padrão aparecer com
+frequência que justifique um **detector estrutural de bloco de assinatura**:
+reconhecer nome + linha numérica curta logo abaixo e propagar uma âncora
+sintética para ela.
+
+**Achado positivo.** A regra de fronteira alfanumérica (Fase 1c,
+`_ANTES`/`_DEPOIS` em `src/redator/detectors/_fronteiras.py`) generalizou
+bem para o hash SHA-256 e para o identificador alfanumérico do documento
+real, **sem nenhum ajuste**: nenhum dos dois disparou falso positivo de
+CPF, CNH ou PIS por coincidência de dígitos. As corridas numéricas dentro
+deles estão coladas a letras ou a `letra-`, e a fronteira as descarta antes
+mesmo de o DV ser consultado.

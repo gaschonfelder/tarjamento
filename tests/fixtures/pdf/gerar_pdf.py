@@ -26,6 +26,7 @@ __all__ = [
     "TABELA_POSICIONADA",
     "gerar_pdf",
     "gerar_pdf_celulas",
+    "gerar_pdf_paginas",
     "gerar_pdf_so_imagem",
     "gerar_pdf_tabela_posicionada",
     "gerar_pdf_vazio",
@@ -122,6 +123,24 @@ def gerar_pdf(caminho: str | Path, linhas: list[str]) -> Path:
             fontname=_FONTE,
             fontsize=_TAMANHO,
         )
+    destino = Path(caminho)
+    documento.save(str(destino))
+    documento.close()
+    return destino
+
+
+def gerar_pdf_paginas(caminho: str | Path, paginas: list[list[str]]) -> Path:
+    """Várias páginas, cada uma com as suas linhas. Lista vazia = página em branco."""
+    documento = pymupdf.open()
+    for linhas in paginas:
+        pagina = documento.new_page()
+        for indice, linha in enumerate(linhas):
+            pagina.insert_text(
+                (_MARGEM_X, _TOPO_Y + indice * _ENTRELINHA),
+                linha,
+                fontname=_FONTE,
+                fontsize=_TAMANHO,
+            )
     destino = Path(caminho)
     documento.save(str(destino))
     documento.close()
