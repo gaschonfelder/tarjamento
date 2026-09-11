@@ -20,7 +20,7 @@ import pytest
 from PIL import Image
 
 from redator.detectors import TODOS_DETECTORES
-from redator.entities import EntityType
+from redator.entities import Entity, EntityType
 from redator.ocr import (
     LIMIAR_CONFIANCA_PADRAO,
     OcrEngine,
@@ -39,6 +39,7 @@ from redator.pdf import (
     gerar_pdf_debug,
     process_pdf,
 )
+from redator.pipeline import detect_all
 
 TESSERACT = tesseract_disponivel()
 requer_tesseract = pytest.mark.skipif(
@@ -461,3 +462,153 @@ def test_palavras_de_baixa_confianca_sao_coerentes_com_o_texto(
     for palavra in pagina.low_confidence_words:
         assert palavra.confidence < motor.limiar_confianca
         assert pagina.text[palavra.start : palavra.end] == palavra.text
+
+
+# =========================================================================== #
+# Fragilidades especificas do caminho de OCR
+# =========================================================================== #
+
+EMAIL_CORROMPIDO = "marcelo.almeida&example.com"
+LINHA_EMAIL = f"e-mail {EMAIL_CORROMPIDO}, doravante denominado CONTRATADO"
+LINHA_RG = "portador da Cedula de Identidade RG no 42.815.739-6 SSP/SP"
+
+
+def so_do_tipo(entidades: list[Entity], tipo: EntityType) -> list[Entity]:
+    return [e for e in entidades if e.type is tipo]
+
+
+# --------------------------------------------------------------------------- #
+# E-mail com "&" no lugar de "@"
+# --------------------------------------------------------------------------- #
+
+
+def test_email_com_e_comercial_e_resgatado_quando_origem_e_ocr() -> None:
+    (email,) = so_do_tipo(
+        detect_all(LINHA_EMAIL, DETECTORES, origem_ocr=True), EntityType.EMAIL
+    )
+    assert email.text == EMAIL_CORROMPIDO
+    assert email.confidence <= 0.5
+    assert email.requires_review is True
+    assert email.context == "email_ocr_ambiguo"
+    assert email.detector == "email_ocr_ambiguo"
+
+
+def test_email_com_e_comercial_nao_e_detectado_em_texto_nativo() -> None:
+    """Em PDF nativo, "&" no lugar de "@" e erro de digitacao do documento."""
+    assert so_do_tipo(detect_all(LINHA_EMAIL, DETECTORES), EntityType.EMAIL) == []
+
+
+def test_email_correto_nao_muda_com_origem_ocr() -> None:
+    """A tolerancia e aditiva: e-mail integro continua normal e sem revisao."""
+    linha = "e-mail marcelo.almeida@example.com, doravante"
+    (nativo,) = so_do_tipo(detect_all(linha, DETECTORES), EntityType.EMAIL)
+    (por_ocr,) = so_do_tipo(
+        detect_all(linha, DETECTORES, origem_ocr=True), EntityType.EMAIL
+    )
+    assert nativo == por_ocr
+    assert por_ocr.requires_review is False
+    assert por_ocr.confidence == 0.99
+
+
+def test_variante_com_caractere_engolido_antes_do_e_comercial() -> None:
+    """A leitura da variante limpa foi "marcelo.almeidaG&example.com"."""
+    linha = "e-mail marcelo.almeidaG&example.com, doravante"
+    (email,) = so_do_tipo(
+        detect_all(linha, DETECTORES, origem_ocr=True), EntityType.EMAIL
+    )
+    assert email.text == "marcelo.almeidaG&example.com"
+    assert email.requires_review is True
+
+
+def test_detector_tolerante_nao_disputa_com_o_estrito() -> None:
+    """Um exige "&" onde o outro exige "@": nunca casam o mesmo trecho."""
+    from redator.detectors.contato import detector_email, detector_email_ocr_ambiguo
+
+    assert detector_email.detect(LINHA_EMAIL) == []
+    assert detector_email_ocr_ambiguo.detect("a@b.com") == []
+    assert len(detector_email_ocr_ambiguo.detect(LINHA_EMAIL)) == 1
+
+
+# --------------------------------------------------------------------------- #
+# RG: fragil por construcao nesta origem
+# --------------------------------------------------------------------------- #
+
+
+def test_rg_limpo_de_origem_ocr_sai_marcado_para_revisao() -> None:
+    (rg,) = so_do_tipo(detect_all(LINHA_RG, DETECTORES, origem_ocr=True), EntityType.RG)
+    assert rg.text == "42.815.739-6"
+    assert rg.requires_review is True
+    # A confianca NAO cai: o casamento foi limpo e ancorado. O que a marca diz
+    # e que o TIPO e fragil nesta origem.
+    assert rg.confidence == 0.99
+    assert rg.context is not None
+
+
+def test_rg_limpo_de_texto_nativo_nao_muda() -> None:
+    (rg,) = so_do_tipo(detect_all(LINHA_RG, DETECTORES), EntityType.RG)
+    assert rg.requires_review is False
+    assert rg.confidence == 0.99
+
+
+def test_cpf_e_cnpj_nao_sao_marcados_em_ocr() -> None:
+    """Quem tem DV nao precisa da rede: so os tipos sem DV sao marcados."""
+    linha = "CPF no 529.982.247-25 e CNPJ no 46.634.044/0001-74"
+    for entidade in detect_all(linha, DETECTORES, origem_ocr=True):
+        assert entidade.requires_review is False, entidade
+
+
+def test_tipos_frageis_em_ocr_e_so_o_rg_hoje() -> None:
+    from redator.detectors import TIPOS_FRAGEIS_EM_OCR
+
+    assert TIPOS_FRAGEIS_EM_OCR == frozenset({EntityType.RG})
+
+
+# --------------------------------------------------------------------------- #
+# A origem viaja no proprio dado
+# --------------------------------------------------------------------------- #
+
+
+def test_pagina_de_pdf_nativo_nao_e_de_ocr(pdf_documentos: Path) -> None:
+    assert all(not p.origem_ocr for p in extract_pdf(pdf_documentos).pages)
+
+
+def test_pagina_de_ocr_carrega_a_origem(pdf_escaneado: Path) -> None:
+    assert all(
+        p.origem_ocr
+        for p in extract_pdf_scanned(pdf_escaneado, engine=EngineFalso()).pages
+    )
+
+
+def test_motor_marca_a_origem_ate_na_imagem_em_branco() -> None:
+    pagina = TesseractEngine().extract_text(Image.new("RGB", (100, 50), "white"))
+    assert pagina.origem_ocr is True
+
+
+def test_process_pdf_le_a_origem_da_pagina_sem_lhe_dizer(tmp_path: Path) -> None:
+    """O chamador nao passa origem_ocr; ela vem da propria PageExtraction."""
+    from redator.pdf.extract import DocumentExtraction as _Doc
+
+    def extrator_com_rg(caminho: str | Path) -> _Doc:
+        pagina = montar_pagina_de_dados(
+            {
+                "text": ["RG", "42.815.739-6"],
+                "conf": [95.0, 95.0],
+                "block_num": [1, 1],
+                "par_num": [1, 1],
+                "line_num": [1, 1],
+                "word_num": [1, 2],
+                "left": [80, 140],
+                "top": [80, 80],
+                "width": [50, 200],
+                "height": [40, 40],
+            }
+        )
+        return _Doc(pages=[pagina])
+
+    (rg,) = so_do_tipo(
+        process_pdf(tmp_path / "irrelevante.pdf", DETECTORES, extrator=extrator_com_rg)[
+            0
+        ],
+        EntityType.RG,
+    )
+    assert rg.requires_review is True

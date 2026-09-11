@@ -15,17 +15,21 @@ from ._fronteiras import ANTES, DEPOIS
 __all__ = [
     "CONFIANCA_ANCORADA",
     "CONFIANCA_FRACA",
+    "CONFIANCA_OCR_AMBIGUA",
     "CONFIANCA_PADRAO",
     "DDDS_VALIDOS",
     "DETECTORES_CONTATO",
     "detector_cep",
     "detector_cpf_mascarado",
     "detector_email",
+    "detector_email_ocr_ambiguo",
     "detector_telefone",
 ]
 
 CONFIANCA_ANCORADA = 0.99
 CONFIANCA_PADRAO = 0.9
+# Leitura resgatada de texto corrompido por OCR: nunca vale mais que isto.
+CONFIANCA_OCR_AMBIGUA = 0.5
 # Padrao generico demais para sustentar sozinho: so com rotulo ou vizinhanca.
 CONFIANCA_FRACA = 0.5
 
@@ -61,6 +65,22 @@ _PADRAO_TELEFONE = re.compile(
 )
 
 _PADRAO_CEP = re.compile(rf"{ANTES}\d{{5}}-?\d{{3}}{DEPOIS}")
+
+# O mesmo padrao de e-mail, mas exigindo "&" onde deveria haver "@". O
+# Tesseract le o arroba como "&" (as vezes engolindo um caractere antes,
+# "G&"), e a confianca do OCR nao protege disso: numa das variantes medidas a
+# palavra corrompida saiu com 61, ACIMA do limiar de 60, entao nem entrou em
+# low_confidence_words. Sem esta passagem o e-mail some por inteiro — nem
+# detectado, nem sinalizado —, que e a pior falha possivel para uma
+# ferramenta que prioriza recall.
+_PADRAO_EMAIL_OCR = re.compile(
+    r"(?<![\w.+-])[A-Za-z0-9._%+-]+&[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?![\w-])"
+)
+#: Vai no ``context`` da entidade, para quem revisa entender por que a
+#: confianca e baixa: nao foi o rotulo que faltou, foi o caractere que o OCR
+#: trocou.
+CONTEXTO_EMAIL_OCR = "email_ocr_ambiguo"
 
 # Grupo de CPF escrito por extenso, mascarado ou nao.
 _GRUPO3 = r"(?:\d{3}|\*{3}|[Xx]{3})"
@@ -175,7 +195,47 @@ class _DetectorCpfMascarado(_DetectorPadrao):
         return bool(_TEM_MASCARA.search(match.group()))
 
 
+class _DetectorEmailOcrAmbiguo:
+    """E-mail cujo ``@`` o OCR trocou por ``&``. So roda sobre texto de OCR.
+
+    Nunca disputa com o detector estrito: um exige ``&`` onde o outro exige
+    ``@``, entao os dois jamais casam o mesmo trecho. E resgate, nao
+    alternativa — por isso e aditivo e nao altera nada do caminho nativo.
+
+    Toda entidade daqui sai com ``CONFIANCA_OCR_AMBIGUA`` e
+    ``requires_review=True``, sem excecao e independentemente da confianca
+    que o OCR deu a palavra: se um caractere ja veio trocado, os outros
+    podem ter vindo tambem, e isso o padrao nao tem como ver.
+    """
+
+    entity_type = EntityType.EMAIL
+    name = CONTEXTO_EMAIL_OCR
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.entity_type.name})"
+
+    def detect(self, texto: str) -> list[Entity]:
+        achadas: list[Entity] = []
+        for match in _PADRAO_EMAIL_OCR.finditer(texto):
+            if tem_ancora_negativa(texto, match.start()):
+                continue
+            achadas.append(
+                Entity(
+                    type=self.entity_type,
+                    start=match.start(),
+                    end=match.end(),
+                    text=match.group(),
+                    confidence=CONFIANCA_OCR_AMBIGUA,
+                    detector=self.name,
+                    context=CONTEXTO_EMAIL_OCR,
+                    requires_review=True,
+                )
+            )
+        return achadas
+
+
 detector_email = _DetectorPadrao(EntityType.EMAIL, "email_padrao", _PADRAO_EMAIL)
+detector_email_ocr_ambiguo = _DetectorEmailOcrAmbiguo()
 detector_telefone = _DetectorTelefone(
     EntityType.TELEFONE, "telefone_padrao", _PADRAO_TELEFONE
 )

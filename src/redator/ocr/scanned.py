@@ -58,7 +58,11 @@ def _para_pontos(
         for palavra in pagina.low_confidence_words
     ]
     return PageExtraction(
-        page=numero, text=pagina.text, char_boxes=caixas, low_confidence_words=baixa
+        page=numero,
+        text=pagina.text,
+        char_boxes=caixas,
+        low_confidence_words=baixa,
+        origem_ocr=pagina.origem_ocr,
     )
 
 

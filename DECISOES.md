@@ -134,3 +134,80 @@ real, **sem nenhum ajuste**: nenhum dos dois disparou falso positivo de
 CPF, CNH ou PIS por coincidência de dígitos. As corridas numéricas dentro
 deles estão coladas a letras ou a `letra-`, e a fronteira as descarta antes
 mesmo de o DV ser consultado.
+
+## Fase 2.5 — OCR
+
+### 1. Teste de degradação: o que sobrevive e o que quebra
+
+Três imagens sintéticas do mesmo contrato fictício, em graus crescentes de
+degradação de scanner/foto — rotação, ruído gaussiano, blur e recompressão
+JPEG —, com CPF, CNPJ, RG, CEP, telefone e e-mail.
+
+**Dígitos com pontuação sobrevivem bem**, mesmo no ruído forte: CPF, os dois
+CEPs e o telefone saíram idênticos e ancorados nas três variantes. O dígito
+verificador (CPF, CNPJ) ou o formato rígido (CEP, telefone) tolera pequeno
+erro de leitura — há redundância suficiente para o candidato ainda fechar.
+
+**O que quebra é caractere isolado de forma ambígua**, e quebra justamente
+nos tipos que dependem de forma exata, sem DV para segurar:
+
+- `@` lido como `&` derrubou o e-mail nas **três** variantes, inclusive na
+  limpa (item 2);
+- um espaço fantasma — `42 .815.739-6` em vez de `42.815.739-6` — derrubou o
+  RG no ruído forte;
+- `CNPJ` lido como `CNP)` fez o CNPJ perder a âncora, mas **não** a detecção:
+  o DV segurou o número com 0,95 e `context=None`. É a demonstração mais
+  clara do que o DV compra — tipo validado sobrevive a rótulo corrompido.
+
+Nenhum falso positivo em nenhuma variante: a fronteira alfanumérica e o DV
+seguraram fragmentos como `047/2026` e `no 450`.
+
+### 2. Falso negativo silencioso de e-mail: `@` lido como `&`
+
+O achado mais sério, e o motivo de ele ser sério não é a troca em si — é que
+**a confiança do OCR não protegia dela**. Na variante de ruído leve a palavra
+corrompida saiu com confiança **61, acima do limiar de 60**, então não entrou
+em `low_confidence_words`. O e-mail simplesmente desaparecia: nem detectado,
+nem sinalizado para revisão. Para uma ferramenta que prioriza recall, é a
+pior falha possível — pior que um falso positivo, que ao menos aparece.
+
+Corrigido com um **segundo detector**
+(`_DetectorEmailOcrAmbiguo`, em `src/redator/detectors/contato.py`), ativo só
+quando a origem é OCR, que aceita `&` onde o padrão estrito exige `@`. É
+estritamente aditivo: os dois nunca casam o mesmo trecho, porque um exige o
+caractere que o outro proíbe. Toda entidade que sai por essa via vem com
+`confidence=0.5`, `requires_review=True` e `context="email_ocr_ambiguo"`,
+**sempre e independentemente da confiança que o OCR reportou** — se um
+caractere já veio trocado, os outros podem ter vindo também, e o padrão não
+tem como ver isso.
+
+O caminho de PDF nativo **não muda**. Ali um `&` no lugar de `@` é erro de
+digitação do próprio documento, não degradação de leitura, e não deve ser
+tratado como candidato a e-mail.
+
+### 3. RG em origem OCR: sempre para revisão
+
+RG não tem dígito verificador, e o teste mostrou que a sua forma quebra fácil
+com ruído de imagem. Por isso, quando a origem é OCR, toda entidade de RG sai
+com `requires_review=True` — **mesmo com casamento limpo e âncora presente**.
+
+A confiança não muda: se o match foi limpo e ancorado, ela continua 0,99. O
+que o campo sinaliza é **fragilidade estrutural do tipo naquela origem**, não
+incerteza daquela detecção específica. São duas afirmações diferentes, e
+misturá-las na confiança apagaria a informação de que o match foi bom.
+
+CPF e CNPJ **não** recebem essa marca: o DV já é rede de segurança suficiente.
+A lista está em `redator.detectors.TIPOS_FRAGEIS_EM_OCR` e hoje contém só o
+RG.
+
+### 4. `origem_ocr` é campo do dado, não parâmetro do chamador
+
+`PageExtraction.origem_ocr` (default `False`) diz se o texto veio de OCR.
+`TesseractEngine` e `extract_pdf_scanned` o marcam sozinhos, e `process_pdf`
+o lê da própria página para repassar a `detect_all`.
+
+A alternativa seria um parâmetro em `process_pdf`, e ela foi descartada de
+propósito: esquecer de passá-lo desligaria silenciosamente as duas proteções
+dos itens 2 e 3 — e a falha seria invisível, que é exatamente o tipo de
+problema que essas proteções existem para evitar. Marcado no dado, não há
+como processar texto de OCR e deixar de tratá-lo como tal.

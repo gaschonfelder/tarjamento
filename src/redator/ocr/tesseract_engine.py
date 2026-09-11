@@ -206,6 +206,7 @@ def montar_pagina_de_dados(
         text="".join(caixa.char for caixa in caixas),
         char_boxes=caixas,
         low_confidence_words=baixa_confianca,
+        origem_ocr=True,
     )
 
 
@@ -257,7 +258,7 @@ class TesseractEngine:
 
     def extract_text(self, imagem: Image.Image) -> PageExtraction:
         if _em_branco(imagem):
-            return PageExtraction(page=0, text="", char_boxes=[])
+            return PageExtraction(page=0, text="", char_boxes=[], origem_ocr=True)
         dados = pytesseract.image_to_data(
             imagem,
             lang=self.idioma,

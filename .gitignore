@@ -13,3 +13,6 @@ wheels/
 tests/fixtures/reais/
 .pytest_cache/
 teste_manual.py
+
+# imagens reais de teste de OCR: fora do git, como pdf_manual
+tests/fixtures/imagens_degradadas/

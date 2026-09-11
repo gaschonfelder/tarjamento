@@ -56,12 +56,18 @@ def process_pdf(
     OCRa. O restante do pipeline é o mesmo — é a razão de as duas devolverem
     a mesma ``DocumentExtraction``.
 
+    A origem do texto não precisa ser informada: cada página a carrega em
+    ``PageExtraction.origem_ocr``, e é dela que sai o ``origem_ocr`` de
+    :func:`redator.pipeline.detect_all`. Assim não há como processar texto de
+    OCR e esquecer de tratá-lo como tal.
+
     Toda página aparece no resultado, mesmo sem entidade (lista vazia): quem
     chama sabe que ela foi processada, e não apenas que nada foi achado.
     """
     documento = extrator(caminho)
     return {
-        pagina.page: detect_all(pagina.text, detectores) for pagina in documento.pages
+        pagina.page: detect_all(pagina.text, detectores, origem_ocr=pagina.origem_ocr)
+        for pagina in documento.pages
     }
 
 

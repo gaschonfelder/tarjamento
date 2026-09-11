@@ -83,6 +83,11 @@ class PageExtraction:
     text: str
     char_boxes: list[CharBox]
     low_confidence_words: list[LowConfidenceWord] = field(default_factory=list)
+    #: Se o texto veio de OCR, e nao da camada de texto do PDF. Marcado no
+    #: dado, e nao passado a parte, para nao haver como esquecer: quem
+    #: detecta precisa saber disso para tratar tipo estruturalmente fragil
+    #: nesta origem (veja ``redator.detectors.TIPOS_FRAGEIS_EM_OCR``).
+    origem_ocr: bool = False
 
     def __post_init__(self) -> None:
         if len(self.text) != len(self.char_boxes):

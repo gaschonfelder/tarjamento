@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .detectors import Detector
+from .detectors import DETECTORES_SO_OCR, TIPOS_FRAGEIS_EM_OCR, Detector
 from .entities import Entity
 from .normalize import normalize, span_to_original
 from .overlap import resolve_entities
@@ -18,7 +18,9 @@ def _para_original(entidade: Entity, texto: str, mapa: list[int]) -> Entity:
     return replace(entidade, start=inicio, end=fim, text=texto[inicio:fim])
 
 
-def detect_all(texto: str, detectores: list[Detector]) -> list[Entity]:
+def detect_all(
+    texto: str, detectores: list[Detector], *, origem_ocr: bool = False
+) -> list[Entity]:
     """Roda os detectores e devolve entidades ancoradas no texto original.
 
     Os detectores veem o texto normalizado e reportam offsets nele. Aqui cada
@@ -30,11 +32,26 @@ def detect_all(texto: str, detectores: list[Detector]) -> list[Entity]:
     disputas por trecho e descarta fragmentos espúrios. Como a resolução roda
     depois da conversão, ela enxerga os offsets reais — importante, porque a
     normalização pode mudar comprimentos e, com eles, a precedência.
+
+    ``origem_ocr`` diz que este texto foi lido por OCR, e não veio da camada
+    de texto de um PDF. Normalmente não é preciso passá-lo à mão:
+    :func:`redator.pdf.process_pdf` o lê de ``PageExtraction.origem_ocr``.
+    Com ele ligado, duas coisas mudam — e só para esta origem:
+
+    - entram também os :data:`redator.detectors.DETECTORES_SO_OCR`, que
+      resgatam o que a degradação de leitura quebrou (um ``@`` lido como
+      ``&``, por exemplo). Eles são aditivos e nunca disputam trecho com os
+      detectores normais;
+    - os :data:`redator.detectors.TIPOS_FRAGEIS_EM_OCR` saem com
+      ``requires_review=True``, mesmo com casamento limpo e âncora. A
+      confiança não muda: o que a marca diz é que o TIPO é frágil nesta
+      origem, não que aquela detecção seja duvidosa.
     """
     normalizado, mapa = normalize(texto)
 
+    efetivos = [*detectores, *DETECTORES_SO_OCR] if origem_ocr else detectores
     brutas: list[Entity] = []
-    for detector in detectores:
+    for detector in efetivos:
         brutas.extend(detector.detect(normalizado))
 
     reancoradas: list[Entity] = []
@@ -46,4 +63,12 @@ def detect_all(texto: str, detectores: list[Detector]) -> list[Entity]:
             )
         reancoradas.append(_para_original(entidade, texto, mapa))
 
-    return resolve_entities(reancoradas)
+    resolvidas = resolve_entities(reancoradas)
+    if not origem_ocr:
+        return resolvidas
+    return [
+        replace(entidade, requires_review=True)
+        if entidade.type in TIPOS_FRAGEIS_EM_OCR
+        else entidade
+        for entidade in resolvidas
+    ]
