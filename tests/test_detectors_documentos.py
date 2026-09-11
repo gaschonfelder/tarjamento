@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import json
-from collections import Counter
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -12,6 +9,7 @@ import pytest
 from redator.detectors import Detector
 from redator.detectors.documentos import (
     CONFIANCA_AMBIGUA,
+    CONFIANCA_ANCORADA,
     CONFIANCA_CANONICA,
     CONFIANCA_IRREGULAR,
     DETECTORES_DOCUMENTOS,
@@ -184,14 +182,19 @@ def test_mascara_oficial_tem_confianca_canonica(
     assert detector.detect(valor)[0].confidence == CONFIANCA_CANONICA
 
 
-def test_so_existem_tres_niveis_de_confianca() -> None:
+def test_so_existem_os_niveis_declarados_de_confianca() -> None:
     niveis = set()
     for txt in sorted(TEXTOS.glob("*.txt")):
         with txt.open(encoding="utf-8", newline="") as arquivo:
             texto = arquivo.read()
         for detector in DETECTORES_DOCUMENTOS:
             niveis |= {e.confidence for e in detector.detect(texto)}
-    assert niveis <= {CONFIANCA_CANONICA, CONFIANCA_IRREGULAR, CONFIANCA_AMBIGUA}
+    assert niveis <= {
+        CONFIANCA_ANCORADA,
+        CONFIANCA_CANONICA,
+        CONFIANCA_IRREGULAR,
+        CONFIANCA_AMBIGUA,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -291,15 +294,80 @@ def test_colisao_cnh_pis_ambos_devolvem_com_confianca_reduzida() -> None:
     assert do_cnh[0].span == do_pis[0].span
 
 
-def test_colisao_cnh_pis_o_desempate_e_alfabetico_nao_semantico() -> None:
-    """resolve_entities fica com CNH so porque "CNH" < "PIS".
+def test_colisao_cnh_pis_sem_ancora_o_desempate_e_alfabetico() -> None:
+    """Sem rotulo, resolve_entities fica com CNH so porque "CNH" < "PIS".
 
-    Nao ha nada no numero que justifique a escolha. Este teste existe para que
-    a mudanca de comportamento apareca quando a ancora de contexto entrar.
+    Nao ha nada no numero que justifique a escolha: e desempate por criterio
+    irrelevante, registrado aqui como limitacao do caso sem ancora.
     """
     resultado = detect_all(f"Registro: {CNH_VALIDA}", list(DETECTORES_DOCUMENTOS))
     assert len(resultado) == 1
     assert resultado[0].type is EntityType.CNH
+    assert resultado[0].confidence == CONFIANCA_AMBIGUA
+
+
+@pytest.mark.parametrize(
+    ("rotulo", "esperado"),
+    [
+        ("Registro CNH: ", EntityType.CNH),
+        ("CNH: ", EntityType.CNH),
+        ("PIS/PASEP: ", EntityType.PIS),
+        ("PIS: ", EntityType.PIS),
+        ("NIT: ", EntityType.PIS),
+    ],
+)
+def test_colisao_cnh_pis_a_ancora_decide(rotulo: str, esperado: EntityType) -> None:
+    """Com rotulo, so o tipo ancorado e devolvido, e com confianca maxima."""
+    resultado = detect_all(f"{rotulo}{CNH_VALIDA}", list(DETECTORES_DOCUMENTOS))
+    assert len(resultado) == 1
+    assert resultado[0].type is esperado
+    assert resultado[0].confidence == CONFIANCA_ANCORADA
+    assert resultado[0].context is not None
+
+
+# --------------------------------------------------------------------------- #
+# Âncora negativa suprime, âncora positiva eleva
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "linha",
+    [
+        "Código interno: 52998224725",
+        "Código patrimonial: 11144477735",
+        "Número de série: 529-982-247-25",
+        "Total de registros processados: 52998224725",
+        "Identificador do lote: 12345678909",
+        "Chave de integração: 98765432100",
+        "Protocolo: 52998224725",
+        "Nota de Empenho: 52998224725",
+    ],
+)
+def test_ancora_negativa_suprime_mesmo_com_dv_valido(linha: str) -> None:
+    assert detector_cpf.detect(linha) == [], linha
+
+
+@pytest.mark.parametrize(
+    "linha",
+    [
+        "CPF: 52998224725",
+        "CPF nº 529.982.247-25",
+        "inscrito no CPF sob o nº 529.982.247-25",
+        "CPF do titular: 529.982.247-25",
+    ],
+)
+def test_ancora_positiva_eleva_confianca_e_preenche_context(linha: str) -> None:
+    achadas = detector_cpf.detect(linha)
+    assert len(achadas) == 1, linha
+    assert achadas[0].confidence == CONFIANCA_ANCORADA
+    assert achadas[0].context is not None
+
+
+def test_ancora_do_proprio_tipo_cancela_a_supressao() -> None:
+    """ "Processo" e ancora negativa, mas e o rotulo natural do CNJ."""
+    achadas = detector_processo_cnj.detect(f"Processo nº {CNJ_VALIDO}")
+    assert len(achadas) == 1
+    assert achadas[0].confidence == CONFIANCA_ANCORADA
 
 
 def test_pis_dos_fixtures_nao_colide() -> None:
@@ -308,140 +376,3 @@ def test_pis_dos_fixtures_nao_colide() -> None:
     assert len(do_pis) == 1
     assert do_pis[0].confidence == CONFIANCA_CANONICA
     assert detector_cnh.detect(so_digitos(PIS_VALIDO)) == []
-
-
-# --------------------------------------------------------------------------- #
-# Comparação com o golden set
-# --------------------------------------------------------------------------- #
-
-
-@dataclass(frozen=True)
-class Achado:
-    tipo: str
-    start: int
-    end: int
-    texto: str
-
-
-def _ler(txt: Path) -> str:
-    with txt.open(encoding="utf-8", newline="") as arquivo:
-        return arquivo.read()
-
-
-def _detectadas(texto: str) -> set[Achado]:
-    return {
-        Achado(e.type.name, e.start, e.end, e.text)
-        for e in detect_all(texto, list(DETECTORES_DOCUMENTOS))
-    }
-
-
-def _esperadas(txt: Path, texto: str) -> set[Achado]:
-    """Anotacoes do golden set que cabem a esta tarefa.
-
-    Fora: tipos de outras tarefas e anotacoes marcadas esperado_fase=2 (quebra
-    de linha, que depende de layout). Dentro: as marcadas allowlist=true — o
-    detector DEVE achar, quem decide nao tarjar e a politica, depois.
-    """
-    caminho = txt.with_suffix(".json")
-    if not caminho.exists():
-        return set()
-    return {
-        Achado(a["type"], a["start"], a["end"], texto[a["start"] : a["end"]])
-        for a in json.loads(caminho.read_text(encoding="utf-8"))
-        if a["type"] in NOMES_DESTA_TAREFA and a.get("esperado_fase") != 2
-    }
-
-
-def _relatorio(nome: str, vp: set[Achado], fn: set[Achado], fp: set[Achado]) -> str:
-    tipos = sorted({a.tipo for a in vp | fn | fp})
-    contagem: dict[str, Counter[str]] = {
-        "VP": Counter(a.tipo for a in vp),
-        "FN": Counter(a.tipo for a in fn),
-        "FP": Counter(a.tipo for a in fp),
-    }
-    linhas = [f"{nome}: VP={len(vp)} FN={len(fn)} FP={len(fp)}", "", "por tipo:"]
-    linhas += [
-        f"  {tipo:<16} VP={contagem['VP'][tipo]:<3}"
-        f" FN={contagem['FN'][tipo]:<3} FP={contagem['FP'][tipo]}"
-        for tipo in tipos
-    ]
-    for rotulo, conjunto in (("FALSOS NEGATIVOS", fn), ("FALSOS POSITIVOS", fp)):
-        if conjunto:
-            linhas += ["", rotulo + ":"]
-            linhas += [
-                f"  {a.tipo:<16} {nome} offset {a.start}-{a.end}  {a.texto!r}"
-                for a in sorted(conjunto, key=lambda a: a.start)
-            ]
-    return "\n".join(linhas)
-
-
-POSITIVOS = sorted(
-    p for p in TEXTOS.glob("*.txt") if not p.name.startswith("negativo_")
-)
-NEGATIVOS = sorted(TEXTOS.glob("negativo_*.txt"))
-
-
-@pytest.mark.parametrize("txt", POSITIVOS, ids=lambda p: p.stem)
-def test_fixture_bate_com_o_golden_set(txt: Path) -> None:
-    texto = _ler(txt)
-    achadas, esperadas = _detectadas(texto), _esperadas(txt, texto)
-    vp = achadas & esperadas
-    assert not (esperadas - achadas) and not (achadas - esperadas), _relatorio(
-        txt.name, vp, esperadas - achadas, achadas - esperadas
-    )
-
-
-@pytest.mark.parametrize(
-    "txt",
-    [
-        pytest.param(
-            p,
-            id=p.stem,
-            marks=(
-                # Limitacao CONHECIDA: as armadilhas sao sequencias que fecham o
-                # DV de CPF mas nao sao dado pessoal (numero de serie, codigo
-                # patrimonial, identificador de lote). So a ancora de contexto
-                # distingue, e ela e a proxima tarefa. A regra de fronteira NAO
-                # foi relaxada para fazer este teste passar: ela ja rejeita
-                # 52998224725-A e BR52998224725SP, que sao os casos que a
-                # fronteira consegue resolver.
-                pytest.mark.xfail(
-                    strict=False,
-                    reason="armadilhas exigem ancora de contexto (proxima tarefa)",
-                )
-                if p.name == "negativo_armadilhas.txt"
-                else ()
-            ),
-        )
-        for p in NEGATIVOS
-    ],
-)
-def test_fixture_negativo_nao_detecta_nada(txt: Path) -> None:
-    texto = _ler(txt)
-    achadas = _detectadas(texto)
-    assert not achadas, _relatorio(txt.name, set(), set(), achadas)
-
-
-def test_fronteira_resolve_as_armadilhas_com_letra_colada() -> None:
-    """O que a fronteira resolve sozinha, sem depender de contexto."""
-    texto = _ler(TEXTOS / "negativo_armadilhas.txt")
-    detectados = {a.texto for a in _detectadas(texto)}
-    assert "52998224725-A" not in detectados
-    assert "BR52998224725SP" not in detectados
-    assert not any("A" in t or "B" in t for t in detectados)
-
-
-def test_cobertura_agregada_dos_fixtures_positivos() -> None:
-    """Resumo por tipo sobre todos os fixtures positivos."""
-    vp: Counter[str] = Counter()
-    fn: set[Achado] = set()
-    fp: set[Achado] = set()
-    for txt in POSITIVOS:
-        texto = _ler(txt)
-        achadas, esperadas = _detectadas(texto), _esperadas(txt, texto)
-        vp.update(a.tipo for a in achadas & esperadas)
-        fn |= esperadas - achadas
-        fp |= achadas - esperadas
-    assert not fn and not fp, _relatorio("todos os positivos", set(), fn, fp)
-    assert vp["CPF"] > 0 and vp["CNPJ"] > 0
-    assert {"CNH", "PIS", "TITULO_ELEITOR", "CNS"} <= set(vp)

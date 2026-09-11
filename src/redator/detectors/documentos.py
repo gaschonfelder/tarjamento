@@ -10,6 +10,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from ..anchors import buscar_ancora, tem_ancora_negativa, tipo_ancorado
 from ..entities import Entity, EntityType
 from ..validators import (
     is_valid_cnh,
@@ -21,9 +22,14 @@ from ..validators import (
     is_valid_processo_cnj,
     is_valid_titulo_eleitor,
 )
+from ._fronteiras import ANTES as _ANTES
+from ._fronteiras import DEPOIS as _DEPOIS
+from ._fronteiras import SO_DIGITOS as _SO_DIGITOS
+from ._fronteiras import tolerante as _tolerante
 
 __all__ = [
     "CONFIANCA_AMBIGUA",
+    "CONFIANCA_ANCORADA",
     "CONFIANCA_CANONICA",
     "CONFIANCA_IRREGULAR",
     "DETECTORES_DOCUMENTOS",
@@ -38,37 +44,12 @@ __all__ = [
     "detector_titulo_eleitor",
 ]
 
+# Rotulo explicito antes do numero: a evidencia mais forte que existe aqui.
+CONFIANCA_ANCORADA = 0.99
 CONFIANCA_CANONICA = 0.95
 CONFIANCA_IRREGULAR = 0.85
 # O numero fecha o DV de mais de um tipo e nao ha ancora para desempatar.
 CONFIANCA_AMBIGUA = 0.6
-
-_SEPARADOR = r"[.\-/ ]"
-
-# Fronteira: o candidato nao pode estar colado a letra ou digito, nem ser o
-# pedaco de uma corrida maior de grupos numericos.
-#
-#   (?<![^\W_])        nada alfanumerico imediatamente antes -> BR52998224725SP
-#   (?<![^\W_][.\-/])  nao vem depois de alfanumerico + separador -> A-52998224725
-#                      (cobre tambem 04.122.7001..., que e digito + ponto)
-#   (?![^\W_])         nada alfanumerico logo depois          -> 5299822472500
-#   (?![.\-/][^\W_])   nao e seguido de separador + alfanumerico -> 52998224725-A
-#
-# O espaco fica de fora das duas regras de separador: ele e o que separa o
-# documento do resto da frase, entao exigir que nao venha letra depois de um
-# espaco reprovaria todo match legitimo no meio de um texto.
-_ANTES = r"(?<![^\W_])(?<![^\W_][.\-/])"
-_DEPOIS = r"(?![^\W_])(?![.\-/][^\W_])"
-
-_SO_DIGITOS = re.compile(r"\D")
-
-
-def _tolerante(minimo: int, maximo: int | None = None) -> re.Pattern[str]:
-    """Dígitos com no máximo um separador entre eles, dentro das fronteiras."""
-    maximo = minimo if maximo is None else maximo
-    return re.compile(
-        rf"{_ANTES}\d(?:{_SEPARADOR}?\d){{{minimo - 1},{maximo - 1}}}{_DEPOIS}"
-    )
 
 
 def _mascaras(*padroes: str) -> tuple[re.Pattern[str], ...]:
@@ -202,16 +183,14 @@ class DetectorDocumento:
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.entity_type.name})"
 
-    def _confianca(self, bruto: str, digitos: str) -> float:
-        if len(_tipos_que_validam(bruto, digitos)) > 1:
-            return CONFIANCA_AMBIGUA
-        if any(mascara.fullmatch(bruto) for mascara in self._especificacao.canonicas):
-            return CONFIANCA_CANONICA
-        return CONFIANCA_IRREGULAR
+    def _formato_canonico(self, bruto: str) -> bool:
+        return any(m.fullmatch(bruto) for m in self._especificacao.canonicas)
 
     def detect(self, texto: str) -> list[Entity]:
         especificacao = self._especificacao
+        meu_tipo = especificacao.entity_type
         achadas: list[Entity] = []
+
         for match in especificacao.padrao.finditer(texto):
             bruto = match.group()
             digitos = _SO_DIGITOS.sub("", bruto)
@@ -219,15 +198,40 @@ class DetectorDocumento:
                 continue
             if not especificacao.validador(digitos):
                 continue
+
+            ancora = buscar_ancora(texto, match.start(), tipo=meu_tipo)
+            # Rotulo administrativo manda mais que o DV: numero de serie nao
+            # vira CPF so porque o modulo 11 fecha. A ancora do proprio tipo,
+            # quando existe, cancela a supressao.
+            if ancora is None and tem_ancora_negativa(texto, match.start()):
+                continue
+
+            tipos = _tipos_que_validam(bruto, digitos)
+            if len(tipos) > 1:
+                escolhido = tipo_ancorado(texto, match.start(), tipos=tipos)
+                if escolhido is not None and escolhido[0] is not meu_tipo:
+                    # Outro tipo tem o rotulo: este aqui nem se candidata.
+                    continue
+                confianca = (
+                    CONFIANCA_ANCORADA if escolhido is not None else CONFIANCA_AMBIGUA
+                )
+            elif ancora is not None:
+                confianca = CONFIANCA_ANCORADA
+            elif self._formato_canonico(bruto):
+                confianca = CONFIANCA_CANONICA
+            else:
+                confianca = CONFIANCA_IRREGULAR
+
             achadas.append(
                 Entity(
-                    type=especificacao.entity_type,
+                    type=meu_tipo,
                     start=match.start(),
                     end=match.end(),
                     text=bruto,
-                    confidence=self._confianca(bruto, digitos),
+                    confidence=confianca,
                     detector=especificacao.name,
                     validated=True,
+                    context=ancora,
                 )
             )
         return achadas
