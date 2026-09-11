@@ -77,3 +77,13 @@ def pdf_formulario_posicionado(gerador: ModuleType, tmp_path: Path) -> Path:
     return gerador.gerar_pdf_tabela_posicionada(
         tmp_path / "formulario.pdf", gerador.FORMULARIO_POSICIONADO
     )
+
+
+@pytest.fixture
+def pdf_escaneado(gerador: ModuleType, tmp_path: Path) -> Path:
+    """Uma pagina que e so imagem de um CPF rotulado — sem camada de texto."""
+    if gerador.localizar_fonte() is None:
+        pytest.skip("nenhuma fonte TrueType conhecida para renderizar a imagem")
+    return gerador.gerar_pdf_escaneado(
+        tmp_path / "escaneado.pdf", ["CPF nº 529.982.247-25"]
+    )

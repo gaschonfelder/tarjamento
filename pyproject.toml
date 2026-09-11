@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "pymupdf>=1.28.2",
+    "pytesseract>=0.3.13",
 ]
 
 [project.scripts]
@@ -25,3 +26,10 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.16.5",
 ]
+
+[tool.mypy]
+# pytesseract nao publica stubs nem py.typed; o override evita silenciar o
+# resto do projeto com ignore_missing_imports global.
+[[tool.mypy.overrides]]
+module = "pytesseract"
+ignore_missing_imports = true

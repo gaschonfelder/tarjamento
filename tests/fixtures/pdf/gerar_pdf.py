@@ -12,10 +12,12 @@ Uso direto, para inspecionar um PDF à mão:
 
 from __future__ import annotations
 
+import io
 import sys
 from pathlib import Path
 
 import pymupdf
+from PIL import Image, ImageDraw, ImageFont
 
 __all__ = [
     "COLUNAS_X",
@@ -26,10 +28,13 @@ __all__ = [
     "TABELA_POSICIONADA",
     "gerar_pdf",
     "gerar_pdf_celulas",
+    "gerar_pdf_escaneado",
     "gerar_pdf_paginas",
     "gerar_pdf_so_imagem",
     "gerar_pdf_tabela_posicionada",
     "gerar_pdf_vazio",
+    "localizar_fonte",
+    "renderizar_imagem",
 ]
 
 # Posicao e fonte fixas: o teste precisa ser deterministico.
@@ -141,6 +146,76 @@ def gerar_pdf_paginas(caminho: str | Path, paginas: list[list[str]]) -> Path:
                 fontname=_FONTE,
                 fontsize=_TAMANHO,
             )
+    destino = Path(caminho)
+    documento.save(str(destino))
+    documento.close()
+    return destino
+
+
+# Fontes TrueType para a imagem sintetica de OCR. A bitmap padrao do Pillow e
+# pequena demais para o Tesseract ler com seguranca; sem TTF, quem precisa da
+# imagem pula o teste em vez de fingir que OCRou.
+_FONTES_TTF = (
+    r"C:\Windows\Fonts\arial.ttf",
+    r"C:\Windows\Fonts\calibri.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+)
+_IMG_LARGURA = 1600
+_IMG_MARGEM = 80
+_IMG_TAMANHO_FONTE = 40
+_IMG_ENTRELINHA = 70
+
+
+def localizar_fonte(tamanho: int = _IMG_TAMANHO_FONTE) -> ImageFont.FreeTypeFont | None:
+    """A primeira fonte TrueType conhecida que existir nesta maquina."""
+    for caminho in _FONTES_TTF:
+        if Path(caminho).is_file():
+            return ImageFont.truetype(caminho, tamanho)
+    return None
+
+
+def renderizar_imagem(
+    linhas: list[str], tamanho: int = _IMG_TAMANHO_FONTE
+) -> Image.Image:
+    """Texto preto sobre fundo branco, uma linha por elemento de ``linhas``.
+
+    E o "documento digitalizado" mais limpo possivel: sem ruido, sem
+    inclinacao, fonte grande. Serve para provar que o motor le, nao para
+    medir robustez.
+    """
+    fonte = localizar_fonte(tamanho)
+    if fonte is None:
+        raise RuntimeError("nenhuma fonte TrueType conhecida encontrada")
+    altura = _IMG_MARGEM * 2 + _IMG_ENTRELINHA * max(len(linhas), 1)
+    imagem = Image.new("RGB", (_IMG_LARGURA, altura), "white")
+    desenho = ImageDraw.Draw(imagem)
+    for indice, linha in enumerate(linhas):
+        desenho.text(
+            (_IMG_MARGEM, _IMG_MARGEM + indice * _IMG_ENTRELINHA),
+            linha,
+            fill="black",
+            font=fonte,
+        )
+    return imagem
+
+
+def gerar_pdf_escaneado(caminho: str | Path, linhas: list[str], dpi: int = 200) -> Path:
+    """PDF de uma pagina contendo SO uma imagem do texto — sem camada de texto.
+
+    E o que um scanner produz. ``extract_pdf`` devolve texto vazio para ele;
+    so o OCR consegue ler. A pagina tem o tamanho da imagem convertido de
+    pixels para pontos no ``dpi`` informado.
+    """
+    imagem = renderizar_imagem(linhas)
+    buffer = io.BytesIO()
+    imagem.save(buffer, format="PNG")
+    largura_pt = imagem.width * 72.0 / dpi
+    altura_pt = imagem.height * 72.0 / dpi
+
+    documento = pymupdf.open()
+    pagina = documento.new_page(width=largura_pt, height=altura_pt)
+    pagina.insert_image(pagina.rect, stream=buffer.getvalue())
     destino = Path(caminho)
     documento.save(str(destino))
     documento.close()

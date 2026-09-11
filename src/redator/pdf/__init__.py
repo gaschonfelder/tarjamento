@@ -3,15 +3,18 @@
 from .extract import (
     CharBox,
     DocumentExtraction,
+    LowConfidenceWord,
     PageExtraction,
     bboxes_for_span,
     extract_pdf,
 )
-from .pipeline import gerar_pdf_debug, process_pdf
+from .pipeline import Extrator, gerar_pdf_debug, process_pdf
 
 __all__ = [
     "CharBox",
     "DocumentExtraction",
+    "Extrator",
+    "LowConfidenceWord",
     "PageExtraction",
     "bboxes_for_span",
     "extract_pdf",

@@ -12,7 +12,7 @@ inserido pelo caminho ganha a sua própria caixa.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +21,7 @@ import pymupdf
 __all__ = [
     "CharBox",
     "DocumentExtraction",
+    "LowConfidenceWord",
     "PageExtraction",
     "bboxes_for_span",
     "extract_pdf",
@@ -44,10 +45,33 @@ _SOBREPOSICAO_MINIMA = 0.5
 
 @dataclass(frozen=True)
 class CharBox:
-    """Onde um caractere do texto extraído está na página."""
+    """Onde um caractere do texto extraído está na página.
+
+    ``confidence`` só existe quando o texto veio de OCR: é a confiança que o
+    motor deu à PALAVRA que contém este caractere, de 0 a 100. Para PDF nativo
+    fica ``None`` — o caractere está no arquivo, não há o que estimar.
+    """
 
     char: str
     bbox: BBox  # x0, y0, x1, y1
+    page: int
+    confidence: float | None = None
+
+
+@dataclass(frozen=True)
+class LowConfidenceWord:
+    """Uma palavra que o OCR reconheceu abaixo do limiar de confiança.
+
+    Ela ENTRA no texto mesmo assim — omitir texto é pior que marcar dúvida —,
+    mas fica registrada aqui, com o intervalo ``[start, end)`` que ocupa em
+    ``PageExtraction.text``, para quem for inspecionar ou revisar.
+    """
+
+    text: str
+    bbox: BBox
+    confidence: float
+    start: int
+    end: int
     page: int
 
 
@@ -58,6 +82,7 @@ class PageExtraction:
     page: int
     text: str
     char_boxes: list[CharBox]
+    low_confidence_words: list[LowConfidenceWord] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if len(self.text) != len(self.char_boxes):

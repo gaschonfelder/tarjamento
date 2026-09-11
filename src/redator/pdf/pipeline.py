@@ -7,6 +7,7 @@ daquela página, que é o único espaço em que ``bboxes_for_span`` faz sentido.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pymupdf
@@ -14,9 +15,20 @@ import pymupdf
 from ..detectors import Detector
 from ..entities import Entity
 from ..pipeline import detect_all
-from .extract import BBox, PageExtraction, bboxes_for_span, extract_pdf
+from .extract import (
+    BBox,
+    DocumentExtraction,
+    PageExtraction,
+    bboxes_for_span,
+    extract_pdf,
+)
 
-__all__ = ["gerar_pdf_debug", "process_pdf"]
+__all__ = ["Extrator", "gerar_pdf_debug", "process_pdf"]
+
+#: Qualquer função que leve um caminho de PDF a uma ``DocumentExtraction``.
+#: ``extract_pdf`` (camada de texto nativa) e ``extract_pdf_scanned`` (OCR)
+#: têm esta forma, e o pipeline não distingue uma da outra.
+Extrator = Callable[[str | Path], DocumentExtraction]
 
 # Vermelho translucido: a tarja de debug deixa ver o que esta por baixo.
 _COR = (1.0, 0.0, 0.0)
@@ -28,18 +40,26 @@ _ALTURA_ROTULO = 8.0
 
 
 def process_pdf(
-    caminho: str | Path, detectores: list[Detector]
+    caminho: str | Path,
+    detectores: list[Detector],
+    *,
+    extrator: Extrator = extract_pdf,
 ) -> dict[int, list[Entity]]:
     """Roda os detectores sobre cada página e devolve as entidades por página.
 
-    Os offsets de cada ``Entity`` são do texto ORIGINAL da página, como
-    ``extract_pdf`` o devolveu — ``detect_all`` normaliza internamente e já
-    traz os offsets de volta, então aqui não há segunda normalização.
+    Os offsets de cada ``Entity`` são do texto ORIGINAL da página, como o
+    extrator o devolveu — ``detect_all`` normaliza internamente e já traz os
+    offsets de volta, então aqui não há segunda normalização.
+
+    ``extrator`` escolhe de onde vem o texto: ``extract_pdf`` (padrão) lê a
+    camada de texto nativa; ``redator.ocr.extract_pdf_scanned`` renderiza e
+    OCRa. O restante do pipeline é o mesmo — é a razão de as duas devolverem
+    a mesma ``DocumentExtraction``.
 
     Toda página aparece no resultado, mesmo sem entidade (lista vazia): quem
     chama sabe que ela foi processada, e não apenas que nada foi achado.
     """
-    documento = extract_pdf(caminho)
+    documento = extrator(caminho)
     return {
         pagina.page: detect_all(pagina.text, detectores) for pagina in documento.pages
     }
@@ -87,8 +107,13 @@ def gerar_pdf_debug(
     caminho_entrada: str | Path,
     caminho_saida: str | Path,
     entidades_por_pagina: dict[int, list[Entity]],
+    *,
+    extrator: Extrator = extract_pdf,
 ) -> Path:
     """Copia o PDF com cada entidade marcada em vermelho translúcido.
+
+    ``extrator`` tem de ser o MESMO usado para produzir as entidades: os
+    offsets delas só fazem sentido no texto que aquele extrator gerou.
 
     Sobre cada retângulo de ``bboxes_for_span`` vai um preenchimento com
     opacidade — o conteúdo original continua visível por baixo — e, junto do
@@ -104,7 +129,7 @@ def gerar_pdf_debug(
     if entrada.resolve() == saida.resolve():
         raise ValueError(f"saida igual a entrada: {entrada} — nunca sobrescreve")
 
-    extraido = {pagina.page: pagina for pagina in extract_pdf(entrada).pages}
+    extraido = {pagina.page: pagina for pagina in extrator(entrada).pages}
 
     documento = pymupdf.open(str(entrada))
     try:
