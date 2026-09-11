@@ -1,9 +1,6 @@
-"""Detectores de entidades.
-
-Só a infraestrutura por enquanto: o contrato em :mod:`redator.detectors.base`.
-Os detectores concretos entram aqui conforme forem implementados.
-"""
+"""Detectores de entidades."""
 
 from .base import Detector
+from .documentos import DETECTORES_DOCUMENTOS, DetectorDocumento
 
-__all__ = ["Detector"]
+__all__ = ["DETECTORES_DOCUMENTOS", "Detector", "DetectorDocumento"]
