@@ -1,0 +1,17 @@
+ENDEREÇOS SEM RÓTULO DE CEP
+
+Residente e domiciliado na Rua das Acácias, nº 184, apartamento 32, Jardim Europa, Sorocaba/SP, 18045-310.
+
+Estabelecida na Avenida Empresarial, nº 1250, sala 84, Parque Tecnológico, Sorocaba/SP, 18087-150.
+
+Endereço para correspondência: Rua Professor Antônio Silva, 72, bloco B, Sorocaba/SP, 18040220.
+
+CEP SOLTO, SEM CONTEXTO DE ENDEREÇO
+
+18035-000
+
+SEQUÊNCIAS QUE NÃO SÃO CEP
+
+Quantidade em estoque: 18035000 unidades
+Código do produto: 18045310
+Valor total: R$ 18.045,31

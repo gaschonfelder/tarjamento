@@ -94,6 +94,7 @@ VALORES_CONHECIDOS: dict[str, str] = {
     "18045-310": "CEP",
     "18087-150": "CEP",
     "18045310": "CEP",
+    "18040220": "CEP",
     # --------------------------------------------------------------- EMAIL --
     "marcelo.almeida@example.com": "EMAIL",
     "MARCELO.ALMEIDA@EXAMPLE.COM": "EMAIL",

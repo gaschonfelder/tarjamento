@@ -15,6 +15,7 @@ from .entities import EntityType
 __all__ = [
     "ANCORAS_NEGATIVAS",
     "ANCORAS_POSITIVAS",
+    "JANELA_ENDERECO",
     "JANELA_PADRAO",
     "buscar_ancora",
     "contexto_de_endereco",
@@ -22,7 +23,14 @@ __all__ = [
     "tipo_ancorado",
 ]
 
+# Rotulo de tipo e pontual: vem colado no candidato, so separado por ruido
+# de pontuacao. Quarenta caracteres bastam e evitam alcance indevido.
 JANELA_PADRAO = 40
+# Contexto de endereco e difuso: logradouro, numero, complemento e bairro se
+# espalham pela frase inteira antes do CEP. Em "Avenida Empresarial, nº 1250,
+# sala 84, Parque Tecnológico, Sorocaba/SP, 18087-150" o complemento mais
+# proximo ja esta a 42 caracteres do CEP.
+JANELA_ENDERECO = 120
 
 ANCORAS_POSITIVAS: dict[EntityType, list[str]] = {
     EntityType.CPF: [
@@ -166,6 +174,7 @@ ANCORAS_NEGATIVAS: list[str] = [
 # Palavras que indicam que estamos no meio de um endereco. Servem ao CEP, que
 # sem ancora nem vizinhanca de endereco e um palpite fraco.
 _CONTEXTO_ENDERECO: list[str] = [
+    # logradouro
     "rua",
     "avenida",
     "av.",
@@ -174,22 +183,41 @@ _CONTEXTO_ENDERECO: list[str] = [
     "praça",
     "rodovia",
     "estrada",
-    "bairro",
-    "jardim",
-    "centro",
-    "quadra",
+    "largo",
+    # complemento
+    "sala",
     "bloco",
     "apartamento",
-    "sala",
+    "apto",
     "andar",
-    "sede",
+    "conjunto",
+    "casa",
+    "lote",
+    "quadra",
+    # area
+    "bairro",
+    "jardim",
+    "parque",
+    "vila",
+    "distrito",
+    "centro",
+    "residencial",
+    # verbos e rotulos que introduzem endereco
+    "endereço",
     "residente",
     "domiciliado",
     "domiciliada",
     "estabelecido",
     "estabelecida",
-    "endereço",
+    "sede",
+    "com sede",
 ]
+
+# Sinal estrutural, nao lexical: "Sorocaba/SP," logo antes do candidato. Uma
+# sigla de duas letras colada a barra, depois de um nome proprio, e evidencia
+# de endereco sem depender de vocabulario — pega cidade que nao esta em lista
+# nenhuma. So conta se nada alem de pontuacao a separar do candidato.
+_CIDADE_UF = re.compile(r"[A-ZÁ-Ú][a-zá-ú]+/[A-Z]{2}[\s,.;:-]*$")
 
 _LETRA_OU_DIGITO = r"[^\W_]"
 
@@ -331,7 +359,22 @@ def tem_ancora_negativa(texto: str, start: int, janela: int = JANELA_PADRAO) -> 
     return match_positiva.start() < negativa.start()
 
 
-def contexto_de_endereco(texto: str, start: int, janela: int = JANELA_PADRAO) -> bool:
-    """Se o trecho anterior parece endereço — logradouro, bairro, sede."""
+def contexto_de_endereco(texto: str, start: int, janela: int = JANELA_ENDERECO) -> bool:
+    """Se o trecho anterior parece endereço.
+
+    Duas evidências, qualquer uma basta: vocabulário de endereço (logradouro,
+    complemento, bairro, ou o verbo que o introduz) em qualquer ponto da
+    janela, ou o padrão ``Cidade/UF`` imediatamente antes do candidato.
+
+    A janela aqui é bem maior que a de rótulo (:data:`JANELA_ENDERECO` contra
+    :data:`JANELA_PADRAO`) porque os dois sinais têm natureza diferente: o
+    rótulo é pontual e encostado no valor, o endereço é difuso e se espalha
+    pela frase. A regra de não atravessar quebra de parágrafo vale para as
+    duas.
+    """
     trecho = _janela_de_busca(texto, start, janela)
-    return bool(trecho) and _PADRAO_ENDERECO.search(trecho) is not None
+    if not trecho:
+        return False
+    if _CIDADE_UF.search(trecho):
+        return True
+    return _PADRAO_ENDERECO.search(trecho) is not None

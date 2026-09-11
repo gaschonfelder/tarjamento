@@ -51,6 +51,29 @@ class Achado:
     texto: str
 
 
+# Falsos positivos conhecidos e aceitos nesta fase. Nao entram no golden set
+# como anotacao — o gabarito descreve o que o documento CONTEM, nao o que o
+# detector erra. Ficam aqui, nomeados, para que o teste nao os leia como
+# regressao e para que sumirem tambem apareca (test_falso_positivo_aceito_*).
+#
+# 18035000 em "Quantidade em estoque:" e oito digitos sob rotulo que nao esta
+# na lista administrativa. Sai com 0.5 e requires_review=True, e CEP isolado
+# nunca e tarjado sozinho — refinar esse caminho nao e objetivo desta fase.
+FALSOS_POSITIVOS_ACEITOS: dict[str, set[tuple[str, int, int]]] = {
+    "dificil_cep_sem_rotulo.txt": {("CEP", 433, 441)},
+}
+
+
+def aceitos(txt: Path) -> set[tuple[str, int, int]]:
+    return FALSOS_POSITIVOS_ACEITOS.get(txt.name, set())
+
+
+def sem_aceitos(txt: Path, achados: set[Achado]) -> set[Achado]:
+    """Tira do conjunto os falsos positivos ja documentados para o fixture."""
+    conhecidos = aceitos(txt)
+    return {a for a in achados if (a.tipo, a.start, a.end) not in conhecidos}
+
+
 def ler(txt: Path) -> str:
     """Sem traduzir quebra de linha: os offsets do golden set são do arquivo."""
     with txt.open(encoding="utf-8", newline="") as arquivo:
@@ -107,8 +130,9 @@ def relatorio(nome: str, vp: set[Achado], fn: set[Achado], fp: set[Achado]) -> s
 def test_fixture_bate_com_o_golden_set(txt: Path) -> None:
     texto = ler(txt)
     achadas, esperado = detectadas(texto), esperadas(txt, texto)
-    assert not (esperado - achadas) and not (achadas - esperado), relatorio(
-        txt.name, achadas & esperado, esperado - achadas, achadas - esperado
+    fp = sem_aceitos(txt, achadas - esperado)
+    assert not (esperado - achadas) and not fp, relatorio(
+        txt.name, achadas & esperado, esperado - achadas, fp
     )
 
 
@@ -122,7 +146,7 @@ def test_cobertura_agregada() -> None:
         achadas, esperado = detectadas(texto), esperadas(txt, texto)
         vp |= achadas & esperado
         fn |= esperado - achadas
-        fp |= achadas - esperado
+        fp |= sem_aceitos(txt, achadas - esperado)
     assert not fn and not fp, relatorio("todos os positivos", vp, fn, fp)
     assert {a.tipo for a in vp} == TIPOS_ANOTADOS
     assert len(vp) >= 100
@@ -225,3 +249,42 @@ def test_tipos_sem_ocorrencia_nos_fixtures_nao_inventam(tipo: str) -> None:
             if e.type.name == tipo
         }
         assert not achadas, f"{tipo} inventado em {txt.name}: {achadas}"
+
+
+def test_falso_positivo_aceito_continua_sendo_produzido() -> None:
+    """A tolerancia acima nao pode virar letra morta.
+
+    Se o detector parar de emitir este falso positivo, e porque o caminho do
+    CEP sem ancora mudou — e a entrada em FALSOS_POSITIVOS_ACEITOS precisa
+    sair junto, em vez de ficar escondendo outra coisa.
+    """
+    txt = TEXTOS / "dificil_cep_sem_rotulo.txt"
+    texto = ler(txt)
+    achadas = detectadas(texto)
+    for tipo, inicio, fim in aceitos(txt):
+        alvo = Achado(tipo, inicio, fim, texto[inicio:fim])
+        assert alvo in achadas, f"{alvo} nao e mais produzido: limpe a tolerancia"
+
+
+def test_cep_em_endereco_sai_consistente() -> None:
+    """Os tres CEPs em contexto de endereco valem o mesmo, nao dois valores."""
+    from redator.entities import EntityType
+
+    txt = TEXTOS / "dificil_cep_sem_rotulo.txt"
+    texto = ler(txt)
+    ceps = sorted(
+        (
+            e
+            for e in detect_all(texto, list(TODOS_DETECTORES))
+            if e.type is EntityType.CEP
+        ),
+        key=lambda e: e.start,
+    )
+    em_endereco = [e for e in ceps if e.start < 340]
+    assert [e.text for e in em_endereco] == ["18045-310", "18087-150", "18040220"]
+    assert {e.confidence for e in em_endereco} == {0.9}
+    assert not any(e.requires_review for e in em_endereco)
+
+    soltos = [e for e in ceps if e.start >= 340]
+    assert {e.confidence for e in soltos} == {0.5}
+    assert all(e.requires_review for e in soltos)

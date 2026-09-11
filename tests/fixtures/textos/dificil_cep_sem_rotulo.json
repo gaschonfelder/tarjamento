@@ -1,0 +1,27 @@
+[
+  {
+    "type": "CEP",
+    "start": 125,
+    "end": 134,
+    "text": "18045-310"
+  },
+  {
+    "type": "CEP",
+    "start": 225,
+    "end": 234,
+    "text": "18087-150"
+  },
+  {
+    "type": "CEP",
+    "start": 323,
+    "end": 331,
+    "text": "18040220"
+  },
+  {
+    "type": "CEP",
+    "start": 371,
+    "end": 380,
+    "text": "18035-000",
+    "requires_review": true
+  }
+]
