@@ -1,0 +1,116 @@
+[
+  {
+    "type": "CPF",
+    "start": 43,
+    "end": 57,
+    "text": "529.982.247-25"
+  },
+  {
+    "type": "CPF",
+    "start": 78,
+    "end": 89,
+    "text": "52998224725"
+  },
+  {
+    "type": "CPF",
+    "start": 108,
+    "end": 122,
+    "text": "529 982 247 25"
+  },
+  {
+    "type": "CPF",
+    "start": 157,
+    "end": 171,
+    "text": "529-982-247.25"
+  },
+  {
+    "type": "CPF",
+    "start": 202,
+    "end": 213,
+    "text": "52998224725"
+  },
+  {
+    "type": "CPF",
+    "start": 247,
+    "end": 261,
+    "text": "529.982.247-25"
+  },
+  {
+    "type": "CPF",
+    "start": 282,
+    "end": 296,
+    "text": "529.982.247-25"
+  },
+  {
+    "type": "TELEFONE",
+    "start": 308,
+    "end": 323,
+    "text": "(15) 99842-7316"
+  },
+  {
+    "type": "TELEFONE",
+    "start": 335,
+    "end": 348,
+    "text": "15 99842 7316"
+  },
+  {
+    "type": "TELEFONE",
+    "start": 360,
+    "end": 371,
+    "text": "15998427316"
+  },
+  {
+    "type": "TELEFONE",
+    "start": 383,
+    "end": 400,
+    "text": "+55 15 99842-7316"
+  },
+  {
+    "type": "TELEFONE",
+    "start": 412,
+    "end": 431,
+    "text": "+55 (15) 99842 7316"
+  },
+  {
+    "type": "CEP",
+    "start": 438,
+    "end": 447,
+    "text": "18045-310"
+  },
+  {
+    "type": "CEP",
+    "start": 454,
+    "end": 462,
+    "text": "18045310"
+  },
+  {
+    "type": "EMAIL",
+    "start": 472,
+    "end": 499,
+    "text": "marcelo.almeida@example.com"
+  },
+  {
+    "type": "EMAIL",
+    "start": 531,
+    "end": 558,
+    "text": "MARCELO.ALMEIDA@EXAMPLE.COM"
+  },
+  {
+    "type": "RG",
+    "start": 564,
+    "end": 576,
+    "text": "42.815.739-6"
+  },
+  {
+    "type": "RG",
+    "start": 582,
+    "end": 591,
+    "text": "428157396"
+  },
+  {
+    "type": "RG",
+    "start": 607,
+    "end": 619,
+    "text": "42.815.739-6"
+  }
+]

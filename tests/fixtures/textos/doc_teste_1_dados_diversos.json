@@ -1,0 +1,68 @@
+[
+  {
+    "type": "CNH",
+    "start": 109,
+    "end": 120,
+    "text": "02650306461"
+  },
+  {
+    "type": "PIS",
+    "start": 245,
+    "end": 259,
+    "text": "120.44567.89-1"
+  },
+  {
+    "type": "PIS",
+    "start": 290,
+    "end": 301,
+    "text": "12044567891"
+  },
+  {
+    "type": "TITULO_ELEITOR",
+    "start": 379,
+    "end": 393,
+    "text": "0425 5879 0141"
+  },
+  {
+    "type": "TITULO_ELEITOR",
+    "start": 454,
+    "end": 466,
+    "text": "042558790141"
+  },
+  {
+    "type": "CNS",
+    "start": 565,
+    "end": 583,
+    "text": "174 5987 4356 0003"
+  },
+  {
+    "type": "CNS",
+    "start": 602,
+    "end": 617,
+    "text": "174598743560003"
+  },
+  {
+    "type": "CNH",
+    "start": 683,
+    "end": 694,
+    "text": "02650306461"
+  },
+  {
+    "type": "PIS",
+    "start": 706,
+    "end": 720,
+    "text": "120.44567.89-1"
+  },
+  {
+    "type": "TITULO_ELEITOR",
+    "start": 740,
+    "end": 754,
+    "text": "0425 5879 0141"
+  },
+  {
+    "type": "CNS",
+    "start": 760,
+    "end": 778,
+    "text": "174 5987 4356 0003"
+  }
+]

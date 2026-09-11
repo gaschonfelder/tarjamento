@@ -1,0 +1,80 @@
+[
+  {
+    "type": "CPF",
+    "start": 127,
+    "end": 138,
+    "text": "52998224725",
+    "contexto": "razao_social_mei"
+  },
+  {
+    "type": "CNPJ",
+    "start": 202,
+    "end": 220,
+    "text": "27.865.432/0001-11"
+  },
+  {
+    "type": "CPF",
+    "start": 229,
+    "end": 243,
+    "text": "529.982.247-25",
+    "contexto": "cpf_titular_mei"
+  },
+  {
+    "type": "CEP",
+    "start": 317,
+    "end": 326,
+    "text": "18040-120"
+  },
+  {
+    "type": "CPF",
+    "start": 367,
+    "end": 378,
+    "text": "52998224725",
+    "contexto": "razao_social_mei"
+  },
+  {
+    "type": "CNPJ",
+    "start": 421,
+    "end": 439,
+    "text": "27.865.432/0001-11"
+  },
+  {
+    "type": "CPF",
+    "start": 456,
+    "end": 470,
+    "text": "529.982.247-25",
+    "contexto": "cpf_titular_mei"
+  },
+  {
+    "type": "CNPJ",
+    "start": 719,
+    "end": 737,
+    "text": "41.258.963/0001-77"
+  },
+  {
+    "type": "CPF",
+    "start": 746,
+    "end": 760,
+    "text": "111.444.777-35",
+    "contexto": "cpf_titular_ei"
+  },
+  {
+    "type": "CEP",
+    "start": 829,
+    "end": 838,
+    "text": "18035-210"
+  },
+  {
+    "type": "CPF",
+    "start": 880,
+    "end": 894,
+    "text": "111.444.777-35",
+    "contexto": "cpf_titular_ei"
+  },
+  {
+    "type": "CNPJ",
+    "start": 901,
+    "end": 919,
+    "text": "41.258.963/0001-77"
+  }
+]

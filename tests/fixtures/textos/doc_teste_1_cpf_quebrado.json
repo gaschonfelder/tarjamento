@@ -1,0 +1,37 @@
+[
+  {
+    "type": "CPF",
+    "start": 104,
+    "end": 119,
+    "text": "529.982.\n247-25",
+    "esperado_fase": 2
+  },
+  {
+    "type": "CPF",
+    "start": 237,
+    "end": 252,
+    "text": "111.\n444.777-35",
+    "esperado_fase": 2
+  },
+  {
+    "type": "CPF",
+    "start": 352,
+    "end": 367,
+    "text": "123.456.789-\n09",
+    "esperado_fase": 2
+  },
+  {
+    "type": "CPF",
+    "start": 460,
+    "end": 472,
+    "text": "987654\n32100",
+    "esperado_fase": 2
+  },
+  {
+    "type": "CPF",
+    "start": 564,
+    "end": 578,
+    "text": "529 982\n247 25",
+    "esperado_fase": 2
+  }
+]

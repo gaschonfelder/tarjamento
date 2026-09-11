@@ -1,0 +1,32 @@
+[
+  {
+    "type": "RG",
+    "start": 116,
+    "end": 128,
+    "text": "42.815.739-6"
+  },
+  {
+    "type": "CPF",
+    "start": 135,
+    "end": 149,
+    "text": "529.982.247-25"
+  },
+  {
+    "type": "TELEFONE",
+    "start": 379,
+    "end": 394,
+    "text": "(15) 99842-7316"
+  },
+  {
+    "type": "EMAIL",
+    "start": 419,
+    "end": 446,
+    "text": "marcelo.almeida@example.com"
+  },
+  {
+    "type": "CEP",
+    "start": 546,
+    "end": 555,
+    "text": "18045-310"
+  }
+]

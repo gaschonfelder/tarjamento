@@ -1,0 +1,38 @@
+[
+  {
+    "type": "CPF_MASCARADO",
+    "start": 111,
+    "end": 125,
+    "text": "529.XXX.XXX-25"
+  },
+  {
+    "type": "CPF_MASCARADO",
+    "start": 234,
+    "end": 248,
+    "text": "111.XXX.XXX-35"
+  },
+  {
+    "type": "CPF_MASCARADO",
+    "start": 332,
+    "end": 346,
+    "text": "123.XXX.XXX-09"
+  },
+  {
+    "type": "CPF_MASCARADO",
+    "start": 824,
+    "end": 838,
+    "text": "529.XXX.XXX-25"
+  },
+  {
+    "type": "CPF_MASCARADO",
+    "start": 867,
+    "end": 881,
+    "text": "***.982.247-**"
+  },
+  {
+    "type": "CPF_MASCARADO",
+    "start": 908,
+    "end": 922,
+    "text": "***.***.***-**"
+  }
+]

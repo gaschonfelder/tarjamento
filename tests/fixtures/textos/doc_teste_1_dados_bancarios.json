@@ -1,0 +1,58 @@
+[
+  {
+    "type": "CPF",
+    "start": 67,
+    "end": 81,
+    "text": "529.982.247-25",
+    "contexto": "identificacao_favorecido"
+  },
+  {
+    "type": "CPF",
+    "start": 220,
+    "end": 234,
+    "text": "529.982.247-25",
+    "contexto": "chave_pix"
+  },
+  {
+    "type": "CPF",
+    "start": 279,
+    "end": 293,
+    "text": "111.444.777-35",
+    "contexto": "identificacao_favorecido"
+  },
+  {
+    "type": "EMAIL",
+    "start": 382,
+    "end": 410,
+    "text": "juliana.ferreira@example.com",
+    "contexto": "chave_pix"
+  },
+  {
+    "type": "CPF",
+    "start": 452,
+    "end": 466,
+    "text": "123.456.789-09",
+    "contexto": "identificacao_favorecido"
+  },
+  {
+    "type": "TELEFONE",
+    "start": 558,
+    "end": 577,
+    "text": "+55 (15) 99842-7316",
+    "contexto": "chave_pix"
+  },
+  {
+    "type": "CPF",
+    "start": 620,
+    "end": 634,
+    "text": "987.654.321-00",
+    "contexto": "identificacao_favorecido"
+  },
+  {
+    "type": "CHAVE_PIX",
+    "start": 711,
+    "end": 747,
+    "text": "550e8400-e29b-41d4-a716-446655440000",
+    "contexto": "chave_pix"
+  }
+]

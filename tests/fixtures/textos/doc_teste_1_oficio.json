@@ -1,0 +1,44 @@
+[
+  {
+    "type": "CNPJ",
+    "start": 44,
+    "end": 62,
+    "text": "46.634.044/0001-74",
+    "allowlist": true
+  },
+  {
+    "type": "CEP",
+    "start": 122,
+    "end": 131,
+    "text": "18035-000",
+    "allowlist": true
+  },
+  {
+    "type": "TELEFONE",
+    "start": 157,
+    "end": 171,
+    "text": "(15) 3238-0000",
+    "allowlist": true
+  },
+  {
+    "type": "EMAIL",
+    "start": 194,
+    "end": 229,
+    "text": "atendimento@fundacao-exemplo.gov.br",
+    "allowlist": true
+  },
+  {
+    "type": "EMAIL",
+    "start": 622,
+    "end": 657,
+    "text": "atendimento@fundacao-exemplo.gov.br",
+    "allowlist": true
+  },
+  {
+    "type": "TELEFONE",
+    "start": 675,
+    "end": 689,
+    "text": "(15) 3238-0000",
+    "allowlist": true
+  }
+]

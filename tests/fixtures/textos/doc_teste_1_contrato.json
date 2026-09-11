@@ -1,0 +1,46 @@
+[
+  {
+    "type": "CNPJ",
+    "start": 183,
+    "end": 201,
+    "text": "46.634.044/0001-74",
+    "allowlist": true
+  },
+  {
+    "type": "CEP",
+    "start": 289,
+    "end": 298,
+    "text": "18035-000",
+    "allowlist": true
+  },
+  {
+    "type": "RG",
+    "start": 458,
+    "end": 470,
+    "text": "42.815.739-6"
+  },
+  {
+    "type": "CPF",
+    "start": 504,
+    "end": 518,
+    "text": "529.982.247-25"
+  },
+  {
+    "type": "CEP",
+    "start": 620,
+    "end": 629,
+    "text": "18045-310"
+  },
+  {
+    "type": "TELEFONE",
+    "start": 640,
+    "end": 655,
+    "text": "(15) 99842-7316"
+  },
+  {
+    "type": "EMAIL",
+    "start": 664,
+    "end": 691,
+    "text": "marcelo.almeida@example.com"
+  }
+]
