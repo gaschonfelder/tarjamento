@@ -7,7 +7,9 @@ authors = [
     { name = "gaschonfelder", email = "gaschonfelder@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pymupdf>=1.28.2",
+]
 
 [project.scripts]
 redator = "redator:main"
