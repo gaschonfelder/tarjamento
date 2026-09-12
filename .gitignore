@@ -16,3 +16,6 @@ teste_manual.py
 
 # imagens reais de teste de OCR: fora do git, como pdf_manual
 tests/fixtures/imagens_degradadas/
+
+# Frontend: dependencias instaladas nao vao para o git (dist/ ja coberto acima)
+node_modules/

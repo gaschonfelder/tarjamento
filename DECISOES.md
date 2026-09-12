@@ -211,3 +211,196 @@ propósito: esquecer de passá-lo desligaria silenciosamente as duas proteções
 dos itens 2 e 3 — e a falha seria invisível, que é exatamente o tipo de
 problema que essas proteções existem para evitar. Marcado no dado, não há
 como processar texto de OCR e deixar de tratá-lo como tal.
+
+## Fase 3 — API de revisão
+
+### 1. A API serve o valor real do dado, e isso define o resto
+
+A interface de revisão mostra, no hover, o dado que está por baixo da tarja —
+sem isso quem revisa não tem como julgar se a detecção está certa. Logo
+`GET /documentos/{id}` devolve `texto_original` com CPF, e-mail e RG em texto
+claro.
+
+É decisão deliberada, e todas as restrições abaixo existem por causa dela:
+
+- **nenhum CORS.** Não há `CORSMiddleware` no `app.py`, e acrescentar um é
+  liberar que uma página de terceiro leia o conteúdo de um documento em
+  revisão. Se algum dia a interface for servida de outra origem, a resposta é
+  um proxy reverso na mesma origem, não uma lista de origens permitidas;
+- **bind em `127.0.0.1` por default.** Rede interna exige `REDATOR_API_HOST`
+  escrito à mão por quem opera, e `servir()` registra no log o que isso
+  significa. Nunca `0.0.0.0` por conveniência;
+- **`Cache-Control: no-store` em toda resposta.** Sem isso o dado
+  sobreviveria ao TTL dentro do cache do navegador ou de um proxy, que é
+  exatamente a retenção que o TTL existe para impedir;
+- **nenhuma autenticação.** Fica de fora de propósito nesta fase: a API só
+  escuta em loopback, e uma autenticação mal feita daria a sensação de
+  proteção sem a proteção. Se o bind sair do loopback, autenticação passa a
+  ser pré-requisito, não melhoria.
+
+### 2. Armazenamento em disco, não dict em memória
+
+A tarefa deixava a escolha aberta. O dict foi descartado por um motivo
+estrutural, não de gosto: **a API e o worker RQ são processos diferentes**.
+O worker escreve o resultado que a API precisa ler de volta, e um dict só
+funcionaria se o processamento fosse síncrono — que é justamente o que a fila
+existe para não ser.
+
+Então cada job é um diretório sob `REDATOR_API_DIR` (default: um subdiretório
+fixo do temp do sistema, **fora do repositório**), com `original.pdf`,
+`estado.json` e, quando pronto, `resultado.json`.
+
+**O texto extraído nunca é gravado.** Vive na memória do worker durante o
+processamento e morre com ele. Era o maior volume de dado pessoal em repouso
+e não havia razão para persistir — o que a interface precisa já está no
+`resultado.json`, entidade a entidade.
+
+**Limitação aceita:** não há bloqueio entre processos. As escritas são
+atômicas (`os.replace`), então nunca se lê um JSON parcial, mas duas escritas
+simultâneas no mesmo job resolveriam por última-a-escrever. Como cada job é
+enfileirado uma única vez, o caso não ocorre hoje.
+
+### 3. Expiração por duas vias, porque nenhuma basta sozinha
+
+O TTL (default 30 min) é aplicado de duas formas ao mesmo tempo:
+
+- **agendada** — `enqueue_in` marca `expirar_job` para o vencimento. Depende
+  de `rq worker --with-scheduler`; sem o scheduler, o agendamento
+  simplesmente nunca dispara, sem erro visível;
+- **na leitura** — `Armazenamento.obter` destrói o que já venceu antes de
+  responder, e o GET vira 404.
+
+A segunda é a que garante que **nada vencido é servido**, mesmo com o
+scheduler fora do ar. A primeira é a que garante que **nada abandonado fica
+no disco**, para o job que ninguém mais lê. `purgar_expirados()` existe para
+ser chamada por fora (cron, job periódico, mão) e cobre o mesmo buraco da
+primeira sem depender do scheduler.
+
+### 4. `job_id` validado por regex, porque vira nome de diretório
+
+`job_id` é `uuid4().hex` e só é aceito nessa forma (`[0-9a-f]{32}`). A
+validação não é cosmética: o id vira nome de diretório, e aceitar `..` ou
+barra transformaria `GET /documentos/{job_id}` em leitura de caminho
+arbitrário. Id malformado, job inexistente e job expirado devolvem todos
+**404**, indistinguíveis de propósito.
+
+### 5. OCR decidido pelo documento inteiro, não página a página
+
+`extrair()` tenta `extract_pdf`; só se **todas** as páginas vierem sem texto
+é que cai em `extract_pdf_scanned`. O critério é o documento inteiro porque
+um PDF misto — capa digitalizada, miolo nativo — perderia o texto nativo se
+fosse OCRado por causa da capa, e o OCR é ordens de grandeza mais caro.
+
+**Consequência aceita:** num documento misto, as páginas que são só imagem
+saem vazias. É da mesma família das limitações registradas na Fase 2 (itens 4
+e 6): conhecida, medida e adiada até a frequência justificar o custo de um
+critério por página.
+
+### 6. Falha do worker vira estado, não exceção
+
+`processar_documento` nunca propaga exceção: qualquer falha grava
+`status=ERRO` com a mensagem no próprio job. Deixar a exceção subir mandaria
+o job para a fila de falhas do RQ, onde a interface não o enxerga — e o
+usuário veria o job parado em `PROCESSANDO` para sempre, que é pior que ver o
+erro.
+
+### 7. Testes sem Redis
+
+A suíte usa um `rq.Queue` de verdade sobre `fakeredis`: o caminho de código
+do RQ é o mesmo de produção, só o servidor é falso. Duas montagens, porque
+as duas metades do assíncrono precisam ser observadas — `is_async=False` para
+ver o resultado sem levantar worker, e `is_async=True` **sem worker** para
+ver o estado que a interface enxerga entre o POST e o fim do processamento.
+
+`enqueue_in` não executa em nenhuma das duas (o RQ o põe no
+`ScheduledJobRegistry`, e quem dispara é o scheduler), então a expiração é
+testada chamando `expirar_job` e `purgar_expirados` diretamente — que é
+exatamente o que o scheduler faria.
+
+### 8. Windows: o `Worker` padrão do RQ não roda, e a falha perde o job
+
+Constatado ao subir a pilha de verdade nesta máquina, não em teste. O
+`Worker` padrão do RQ isola cada job num processo filho criado com
+`os.fork()`, que **não existe no Windows**. O worker sobe, escuta, aceita o
+primeiro job e morre com
+`AttributeError: module 'os' has no attribute 'fork'`.
+
+O que torna isso pior que um crash comum: o job **já tinha saído da fila**
+quando o worker morreu. Ninguém o reprocessa, e ele fica **preso em
+`RECEBIDO` permanentemente** — a interface o mostra como "recebido, aguarde"
+para sempre, sem erro em lugar nenhum. Não é o caminho do item 6: ali a
+exceção é do processamento e vira `ERRO` visível; aqui o worker morre antes
+de chegar ao nosso código, então não há quem escreva estado nenhum.
+
+**Correção em ambiente Windows:** `--worker-class rq.SimpleWorker`, que
+executa o job no próprio processo, sem fork.
+
+**Custo aceito:** sem processo filho não há quem matar quando o
+`job_timeout` (`TIMEOUT_PROCESSAMENTO`) estoura, e um job travado prende o
+worker indefinidamente. **Em produção Linux usa-se o `Worker` padrão**, que
+não tem essa limitação e faz o timeout valer de novo.
+
+É diferença de ambiente de desenvolvimento, não de arquitetura: nada em
+`redator.api` muda por causa disso.
+
+### 9. O lock do scheduler do RQ falha em silêncio, e o TTL para de existir
+
+O scheduler é quem dispara o que foi agendado — no nosso caso, o
+`expirar_job` de **todo** job, ou seja, o TTL inteiro do item 3.
+
+O lock do scheduler é adquirido **uma única vez, na subida do processo**, e
+**a falha ao adquiri-lo é silenciosa**. Se um worker morre segurando o lock e
+outro sobe antes de o lock expirar, o segundo worker **processa jobs
+normalmente** e **nunca executa nada agendado** — sem erro, sem aviso, sem
+nenhuma linha no log dizendo que o scheduler não subiu. Não há retentativa.
+
+**O sintoma é uma falha de segurança, não de disponibilidade.** O TTL
+configurado não dispara, e o dado pessoal **fica retido em disco além do
+prazo prometido** — exatamente a retenção que o item 1 diz não existir. E
+fica sem nenhum log de erro para denunciar: tudo parece saudável, os jobs são
+processados, só a destruição nunca acontece.
+
+Foi o que aconteceu aqui: o worker do item 8 morreu segurando o lock, o
+substituto subiu 18 segundos depois, e jobs vencidos ficaram no disco
+indefinidamente enquanto o worker parecia perfeito.
+
+**Como verificar, sempre, ao subir o worker:** a linha
+
+```
+Acquired scheduler lock for redator
+```
+
+tem de aparecer no log da subida. **A ausência dela é o problema.** Se não
+aparecer: mate todos os workers, espere o lock vencer (~1 min) e suba um só.
+
+Vale registrar o que *não* é o problema: o scheduler **funciona no Windows**
+(`RQScheduler` cai em `multiprocessing` com spawn quando não há fork).
+Verificado com TTL de 60 s — o `expirar_job` agendado disparou e removeu o
+diretório do disco sem nenhum GET envolvido, que é a prova de que a via
+agendada trabalha sozinha. O que quase mascarou isso foi o lock órfão.
+
+A via preguiçosa do item 3 (`Armazenamento.obter` destrói o vencido antes de
+responder) continua sendo a rede de segurança: mesmo com o scheduler morto,
+nada vencido chega a ser **servido**. O que se perde sem o scheduler é a
+destruição do job que ninguém mais lê — e é por isso que as duas vias existem.
+
+### 10. Redis local no Windows exige WSL2 com `redis-server` como serviço
+
+Não há build oficial de Redis para Windows, e esta máquina não tem Docker
+Desktop. O caminho é o WSL2 (Ubuntu), com `redis-server` instalado e
+habilitado como serviço systemd.
+
+O Redis fica em `127.0.0.1:6379` **dentro** do WSL e chega ao Windows no
+mesmo endereço pelo encaminhamento de localhost do WSL2 — **sem abrir o
+bind**. Isso não é detalhe de conveniência: um Redis sem senha guardando fila
+de documento com dado pessoal não deve aceitar conexão de fora da máquina, e
+`bind 0.0.0.0` faria exatamente isso.
+
+Pegadinha operacional: **o WSL desliga sozinho quando fica ocioso e leva o
+Redis junto**. O `systemctl enable` o traz de volta quando o WSL sobe, mas no
+meio de uma sessão a conexão simplesmente cai.
+
+Os passos exatos — instalação, verificação do alcance a partir do Windows, o
+processo que segura o WSL aberto e os três comandos para subir a pilha —
+estão no README, em **Desenvolvimento local: API, fila e worker**. Aqui fica
+só o porquê; lá, o como.

@@ -67,6 +67,128 @@ Tesseract a usa; senão, `%LOCALAPPDATA%\tessdata` é usada quando existir.
 Os dois podem ser passados explicitamente ao construir o motor
 (`tesseract_cmd=`, `tessdata_dir=`).
 
+## Desenvolvimento local: API, fila e worker
+
+A suíte de testes **não precisa de Redis** — `tests/test_api.py` usa
+`fakeredis`. Esta seção é para o teste de ponta a ponta à mão: subir a API de
+verdade, com Redis e worker, e conferir o contrato antes de mexer no front.
+
+### Redis no Windows: WSL2
+
+Não há pacote oficial de Redis para Windows. Nesta máquina não há Docker
+Desktop, então o caminho mais curto é o WSL2 — que já estava instalado com
+Ubuntu. Uma vez só:
+
+```powershell
+wsl -d Ubuntu -- bash -c "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server"
+wsl -d Ubuntu -- systemctl enable --now redis-server
+wsl -d Ubuntu -- redis-cli ping          # PONG
+```
+
+**Não é preciso abrir o bind.** O Redis fica em `127.0.0.1:6379` *dentro* do
+WSL, e o encaminhamento de localhost do WSL2 o torna alcançável do Windows no
+mesmo endereço. Confira do lado Windows:
+
+```powershell
+uv run python -c "import redis; print(redis.Redis.from_url('redis://127.0.0.1:6379/0').ping())"
+```
+
+Mantê-lo em `127.0.0.1` não é detalhe: com `bind 0.0.0.0` o Redis passaria a
+aceitar conexão de fora da máquina, e um Redis sem senha guardando fila de
+documento pessoal não deve estar exposto a nada.
+
+**Pegadinha: o WSL desliga sozinho quando fica ocioso, e leva o Redis junto.**
+O `systemctl enable` garante que ele volte quando o WSL subir de novo, mas no
+meio de uma sessão de teste a conexão simplesmente cai. Deixe um processo
+segurando o WSL aberto num terminal à parte enquanto trabalha:
+
+```powershell
+wsl -d Ubuntu -- sleep infinity
+```
+
+(Qualquer terminal WSL aberto serve; o `sleep` é só a forma mais explícita.)
+
+### Worker: no Windows, `rq.SimpleWorker`
+
+O `Worker` padrão do RQ isola cada job num processo filho criado com
+`os.fork()` — que **não existe no Windows**. O worker sobe, escuta e morre no
+primeiro job, com `AttributeError: module 'os' has no attribute 'fork'`. Use
+o `SimpleWorker`, que roda o job no próprio processo:
+
+```powershell
+uv run rq worker --with-scheduler --worker-class rq.SimpleWorker --url redis://127.0.0.1:6379/0 redator
+```
+
+O que se perde com isso, e só vale no Windows: sem processo filho, o
+`job_timeout` (`TIMEOUT_PROCESSAMENTO`, 10 min) não tem quem matar, e um job
+que trave prende o worker. Em produção Linux vale o `Worker` normal, e aí o
+comando é o do topo de `src/redator/api/jobs.py`, sem `--worker-class`.
+
+O `--with-scheduler` é o que dispara a expiração agendada no vencimento do
+TTL. Sem ele a API continua correta — `Armazenamento.obter` destrói o que
+venceu antes de responder —, mas um job que ninguém mais leia fica no disco
+até alguém chamar `purgar_expirados`.
+
+**Pegadinha: o lock do scheduler não é retentado.** O worker tenta pegar o
+lock **uma vez**, na subida. Se outro worker o estiver segurando — inclusive
+um que morreu e ainda não teve o lock expirado — ele desiste **em silêncio**:
+não há erro, não há aviso, o worker roda normalmente e nada agendado dispara
+nunca. O sintoma é exatamente o que se viu aqui: jobs vencidos ficando no
+disco enquanto o worker parece saudável.
+
+Confirme, sempre, que a linha abaixo aparece no log da subida:
+
+```
+Acquired scheduler lock for redator
+```
+
+Se não aparecer, mate todos os workers, espere o lock vencer (~1 min) e suba
+um só. Para conferir o que está agendado:
+
+```powershell
+uv run python -c "import redis; from rq import Queue; from rq.registry import ScheduledJobRegistry; q=Queue('redator', connection=redis.Redis.from_url('redis://127.0.0.1:6379/0')); r=ScheduledJobRegistry(queue=q); print(len(r), [(j, r.get_scheduled_time(j)) for j in r.get_job_ids()])"
+```
+
+### Subir tudo
+
+Três terminais, mais o que segura o WSL:
+
+```powershell
+# 1. Redis (via WSL) — e deixe este terminal aberto
+wsl -d Ubuntu -- sleep infinity
+
+# 2. Worker
+uv run rq worker --with-scheduler --worker-class rq.SimpleWorker --url redis://127.0.0.1:6379/0 redator
+
+# 3. API
+uv run uvicorn redator.api.app:app --host 127.0.0.1 --port 8731
+```
+
+Variáveis de ambiente úteis (todas com default seguro, veja
+`src/redator/api/config.py`): `REDATOR_API_TTL` (segundos, default 1800),
+`REDATOR_API_DIR`, `REDATOR_API_MAX_BYTES`, `REDATOR_REDIS_URL`,
+`REDATOR_API_HOST`, `REDATOR_API_PORT`.
+
+### Teste de ponta a ponta à mão
+
+```powershell
+# POST — devolve 202 e o id, sem esperar o processamento
+curl -s -X POST -F "arquivo=@tests/fixtures/pdf_manual/SEU_PDF.pdf" http://127.0.0.1:8731/documentos
+
+# GET — repita até status virar "pronto"
+curl -s http://127.0.0.1:8731/documentos/<job_id>
+
+# DELETE — 204, e o diretório do job some do disco
+curl -s -X DELETE http://127.0.0.1:8731/documentos/<job_id>
+```
+
+Os arquivos de cada job ficam em `%LOCALAPPDATA%\Temp\redator-jobs\<job_id>\`
+(`original.pdf`, `estado.json`, `resultado.json`). Para conferir que sumiram:
+
+```powershell
+Get-ChildItem "$env:LOCALAPPDATA\Temp\redator-jobs"
+```
+
 ## Uso básico
 
 ```python

@@ -1,0 +1,686 @@
+/*
+ * Um arquivo só: a tela é uma, e espalhar isso em módulos por componente
+ * custaria mais navegação do que organiza.
+ *
+ * As quatro aparências de tarja são o centro do arquivo — é por elas que o
+ * revisor distingue, de relance, o que o detector sabe de cada achado.
+ */
+
+:root {
+  --fundo: #16181d;
+  --fundo-painel: #1e2128;
+  --fundo-caixa: #262a33;
+  --borda: #343945;
+  --texto: #e6e8ec;
+  --texto-fraco: #9ba3b4;
+  --primaria: #4c8dff;
+
+  /* Detectada com âncora no texto: o caso normal. */
+  --tarja-padrao: 220 38 38;
+  /* Validada por DV, sem âncora por perto. Mesma cor, sinal extra. */
+  --tarja-sem-contexto: 220 38 38;
+  /* Sinalizada para revisão: tipo frágil nesta origem. */
+  --tarja-revisao: 245 158 11;
+  /* Desenhada à mão pelo revisor. */
+  --tarja-manual: 56 189 248;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--fundo);
+  color: var(--texto);
+  font: 14px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+button {
+  font: inherit;
+}
+
+/* ---------------------------------------------------------------- layout */
+
+.app {
+  /* `height` e nao `min-height`: com min-height a area de paginas cresce com
+     o documento, o corpo inteiro vira a barra de rolagem e o painel lateral
+     sai da tela. Limitando aqui, cada coluna rola por dentro de si. */
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.app__cabecalho {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--borda);
+  background: var(--fundo-painel);
+}
+
+.app__cabecalho h1 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: 0.02em;
+}
+
+.app__subtitulo {
+  margin: 0;
+  color: var(--texto-fraco);
+  font-size: 12px;
+}
+
+.app__job {
+  margin-left: auto;
+  color: var(--texto-fraco);
+  font-size: 12px;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+}
+
+.revisao {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.revisao__paginas {
+  flex: 1;
+  overflow: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+}
+
+.revisao__carregando {
+  color: var(--texto-fraco);
+}
+
+/* --------------------------------------------------------------- entrada */
+
+.entrada {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px;
+}
+
+.solta {
+  width: min(560px, 90vw);
+  padding: 56px 24px;
+  border: 2px dashed var(--borda);
+  border-radius: 12px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.solta:hover,
+.solta--sobre {
+  border-color: var(--primaria);
+  background: rgb(76 141 255 / 8%);
+}
+
+.solta__titulo {
+  margin: 0 0 6px;
+  font-size: 17px;
+}
+
+.solta__ou {
+  margin: 0;
+  color: var(--texto-fraco);
+  font-size: 13px;
+}
+
+.entrada__nota {
+  max-width: 520px;
+  color: var(--texto-fraco);
+  font-size: 12px;
+  text-align: center;
+}
+
+.processando {
+  width: min(420px, 90vw);
+  text-align: center;
+}
+
+.processando__barra {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--borda);
+  overflow: hidden;
+}
+
+.processando__preenchimento {
+  height: 100%;
+  background: var(--primaria);
+  transition: width 0.3s;
+}
+
+.processando__preenchimento--indeterminado {
+  width: 35%;
+  animation: desliza 1.1s ease-in-out infinite;
+}
+
+@keyframes desliza {
+  0% { margin-left: -35%; }
+  100% { margin-left: 100%; }
+}
+
+.processando__legenda {
+  margin-top: 12px;
+  color: var(--texto-fraco);
+  font-size: 13px;
+}
+
+/* --------------------------------------------------------------- páginas */
+
+.pagina {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pagina__cabecalho {
+  display: flex;
+  justify-content: space-between;
+  color: var(--texto-fraco);
+  font-size: 12px;
+}
+
+.pagina__palco {
+  position: relative;
+  background: #fff;
+  box-shadow: 0 2px 16px rgb(0 0 0 / 45%);
+}
+
+.pagina__canvas {
+  display: block;
+}
+
+.pagina__erro {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 70%);
+  color: #fca5a5;
+  font-size: 13px;
+  text-align: center;
+}
+
+.pagina__camada {
+  position: absolute;
+  inset: 0;
+}
+
+.pagina__camada--desenhando {
+  cursor: crosshair;
+}
+
+/* ---------------------------------------------------------------- tarjas */
+
+.tarja {
+  position: absolute;
+  border: 1.5px solid rgb(var(--cor) / 90%);
+  background: rgb(var(--cor) / 30%);
+  cursor: pointer;
+}
+
+.tarja--padrao { --cor: var(--tarja-padrao); }
+.tarja--sem-contexto,
+.tarja--sem_contexto {
+  --cor: var(--tarja-sem-contexto);
+  /* O mesmo vermelho, mas a borda dupla diz "validado sem âncora textual". */
+  border-style: double;
+  border-width: 3px;
+}
+.tarja--revisao { --cor: var(--tarja-revisao); }
+.tarja--manual {
+  --cor: var(--tarja-manual);
+  border-style: solid;
+}
+
+/* Rejeitada não some: fica fantasma e tracejada, para dar para desfazer. */
+.tarja--rejeitada {
+  background: rgb(var(--cor) / 6%);
+  border-style: dashed;
+  border-width: 1.5px;
+  opacity: 0.55;
+}
+
+.tarja--selecionada {
+  outline: 2px solid var(--primaria);
+  outline-offset: 1px;
+}
+
+.tarja--rascunho {
+  --cor: var(--tarja-manual);
+  border-style: dashed;
+  pointer-events: none;
+}
+
+.tarja__marca {
+  position: absolute;
+  top: -7px;
+  left: -7px;
+  z-index: 5;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgb(var(--cor));
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+}
+
+.tarja__acoes {
+  position: absolute;
+  top: -11px;
+  right: -11px;
+  display: flex;
+  gap: 2px;
+}
+
+.tarja__botao {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--borda);
+  border-radius: 50%;
+  background: var(--fundo-caixa);
+  color: var(--texto);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tarja__botao:hover {
+  background: var(--primaria);
+  color: #fff;
+}
+
+.tarja__alca {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  background: var(--primaria);
+  border: 1px solid #fff;
+  border-radius: 2px;
+}
+
+.tarja__alca--nw { top: -5px; left: -5px; cursor: nwse-resize; }
+.tarja__alca--ne { top: -5px; right: -5px; cursor: nesw-resize; }
+.tarja__alca--sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
+.tarja__alca--se { bottom: -5px; right: -5px; cursor: nwse-resize; }
+
+.tarja__tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+  padding: 8px 10px;
+  border: 1px solid var(--borda);
+  border-radius: 6px;
+  background: var(--fundo-caixa);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 50%);
+  color: var(--texto);
+  font-size: 12px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.tarja__valor {
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 13px;
+}
+
+.tarja__valor--ausente {
+  color: var(--texto-fraco);
+  font-family: inherit;
+  font-style: italic;
+}
+
+.tarja__meta {
+  color: var(--texto-fraco);
+  font-size: 11px;
+}
+
+/* ---------------------------------------------------------------- painel */
+
+.painel {
+  width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border-left: 1px solid var(--borda);
+  background: var(--fundo-painel);
+  overflow: auto;
+}
+
+.painel__titulo {
+  margin: 0;
+  font-size: 15px;
+}
+
+.painel__subtitulo {
+  margin: 4px 0 0;
+  color: var(--texto-fraco);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.painel__numeros {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.painel__numero {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--fundo-caixa);
+}
+
+.painel__numero dt {
+  font-size: 12px;
+  color: var(--texto-fraco);
+}
+
+.painel__numero dd {
+  margin: 0;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.painel__numero--alerta dd {
+  color: rgb(var(--tarja-revisao));
+}
+
+.painel__extra,
+.painel__dica {
+  margin: 0;
+  color: var(--texto-fraco);
+  font-size: 12px;
+}
+
+.painel__aviso {
+  padding: 10px;
+  border-left: 3px solid rgb(var(--tarja-revisao));
+  border-radius: 4px;
+  background: rgb(245 158 11 / 12%);
+  font-size: 12px;
+}
+
+.painel__acoes,
+.painel__rodape {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.painel__rodape {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--borda);
+}
+
+.painel__zoom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--texto-fraco);
+}
+
+.painel__escala {
+  min-width: 44px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.painel__legenda {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--texto-fraco);
+}
+
+.painel__legenda li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.amostra {
+  width: 16px;
+  height: 12px;
+  flex-shrink: 0;
+  border: 1.5px solid rgb(var(--cor) / 90%);
+  background: rgb(var(--cor) / 30%);
+}
+
+.amostra--padrao { --cor: var(--tarja-padrao); }
+.amostra--sem_contexto {
+  --cor: var(--tarja-sem-contexto);
+  border-style: double;
+  border-width: 3px;
+}
+.amostra--revisao { --cor: var(--tarja-revisao); }
+.amostra--manual { --cor: var(--tarja-manual); }
+
+.painel__lista {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-left: 3px solid rgb(var(--cor));
+  border-radius: 4px;
+  background: var(--fundo-caixa);
+  color: var(--texto);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.item--padrao { --cor: var(--tarja-padrao); }
+.item--sem_contexto { --cor: var(--tarja-sem-contexto); }
+.item--revisao { --cor: var(--tarja-revisao); }
+.item--manual { --cor: var(--tarja-manual); }
+
+.item:hover {
+  border-color: var(--borda);
+}
+
+.item--selecionada {
+  border-color: var(--primaria);
+}
+
+.item--rejeitada {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.item__pagina {
+  margin-left: auto;
+  color: var(--texto-fraco);
+}
+
+.item__pendente {
+  color: rgb(var(--tarja-revisao));
+  font-size: 16px;
+  line-height: 1;
+}
+
+/* ---------------------------------------------------------------- botões */
+
+.botao {
+  padding: 7px 12px;
+  border: 1px solid var(--borda);
+  border-radius: 6px;
+  background: var(--fundo-caixa);
+  color: var(--texto);
+  cursor: pointer;
+}
+
+.botao:hover {
+  border-color: var(--primaria);
+}
+
+.botao--primario {
+  background: var(--primaria);
+  border-color: var(--primaria);
+  color: #fff;
+  font-weight: 600;
+}
+
+.botao--ativo {
+  border-color: var(--primaria);
+  background: rgb(76 141 255 / 18%);
+}
+
+.botao--pequeno {
+  padding: 3px 9px;
+  font-size: 12px;
+}
+
+.botao--discreto {
+  background: transparent;
+  color: var(--texto-fraco);
+}
+
+/* ----------------------------------------------------------------- modal */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 60%);
+}
+
+.modal__caixa {
+  width: min(480px, 92vw);
+  padding: 20px;
+  border: 1px solid var(--borda);
+  border-radius: 10px;
+  background: var(--fundo-painel);
+}
+
+.modal__caixa h2 {
+  margin: 0 0 14px;
+  font-size: 16px;
+}
+
+.modal__numeros {
+  margin: 0 0 14px;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.modal__numeros strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.modal__ok {
+  color: #86efac;
+  font-size: 13px;
+}
+
+.modal__nota {
+  color: var(--texto-fraco);
+  font-size: 12px;
+}
+
+.modal__acoes {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* --------------------------------------------------------------- avisos */
+
+.aviso {
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.aviso p {
+  margin: 0;
+}
+
+.aviso--erro {
+  border: 1px solid #7f1d1d;
+  background: rgb(127 29 29 / 25%);
+  color: #fecaca;
+}
+
+.aviso--erro h2 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+.aviso--atencao {
+  border-left: 3px solid rgb(var(--tarja-revisao));
+  background: rgb(245 158 11 / 12%);
+}
+
+.faixa {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  transform: translateX(-50%);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 50%);
+  font-size: 13px;
+}
+
+.faixa--sucesso {
+  border: 1px solid #166534;
+  background: #14532d;
+  color: #dcfce7;
+}
