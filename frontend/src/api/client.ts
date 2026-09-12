@@ -80,11 +80,39 @@ export async function consultarJob(
 }
 
 /**
+ * Baixa o PDF original do job.
+ *
+ * O browser não guarda o `File` do upload entre recarregamentos, então esta é
+ * a única forma de a tela de revisão voltar a ter o documento depois de um
+ * refresh. Devolve um `File` (e não o `Blob` cru) porque é o que
+ * `RevisaoDocumento` espera — ele só chama `arrayBuffer()`, mas o tipo já
+ * estava assim para o arquivo recém-enviado.
+ */
+export async function baixarOriginal(
+  jobId: string,
+  sinal?: AbortSignal,
+): Promise<File> {
+  const resposta = await fetch(`${BASE}/documentos/${jobId}/original`, {
+    ...(sinal ? { signal: sinal } : {}),
+  });
+
+  if (resposta.status === 404) throw new JobNaoEncontrado();
+  if (!resposta.ok) throw new ErroApi(resposta.status, await detalhe(resposta));
+  return new File([await resposta.blob()], 'documento.pdf', {
+    type: 'application/pdf',
+  });
+}
+
+/**
  * Destrói o job no servidor. Best-effort de propósito: é limpeza, e falhar
  * nela não pode travar a tela — o TTL do backend apaga de qualquer jeito.
  *
- * `keepalive` deixa a requisição sobreviver à navegação, que é o caso de
- * fechar a aba. (`sendBeacon` não serve: ele só faz POST.)
+ * Só é chamada por ação DELIBERADA do usuário (descartar, recomeçar). Sair da
+ * página NÃO destrói o job: o TTL do servidor já cobre o abandono, e apagar
+ * na primeira troca de aba puniria qualquer navegação acidental.
+ *
+ * `keepalive` deixa a requisição sobreviver à navegação, caso ela aconteça
+ * logo depois do clique. (`sendBeacon` não serve: ele só faz POST.)
  */
 export function descartarJob(jobId: string): void {
   void fetch(`${BASE}/documentos/${jobId}`, {

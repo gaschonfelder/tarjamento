@@ -73,6 +73,14 @@ button {
   font-size: 12px;
 }
 
+/* Estado transitorio da retomada por `?job=`, antes de saber se o job vive. */
+.app__retomando {
+  margin: 48px auto;
+  color: var(--texto-fraco);
+  font-size: 14px;
+  text-align: center;
+}
+
 .app__job {
   margin-left: auto;
   color: var(--texto-fraco);

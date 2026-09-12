@@ -519,3 +519,58 @@ def test_ata_real_de_ponta_a_ponta(cliente: TestClient) -> None:
     achadas = entidades(corpo)
     assert sum(e["type"] == "CPF" for e in achadas) == 10
     assert sum(e["type"] == "EMAIL" for e in achadas) == 7
+
+
+# --------------------------------------------------------------------------- #
+# GET /documentos/{id}/original — o PDF de volta, para a interface renderizar
+# --------------------------------------------------------------------------- #
+
+
+def test_original_devolve_o_pdf_enviado(
+    cliente: TestClient, pdf_documentos: Path
+) -> None:
+    """Byte a byte igual ao que subiu: e o mesmo arquivo, nao uma reescrita."""
+    job_id = enviar(cliente, pdf_documentos).json()["id"]
+    resposta = cliente.get(f"/documentos/{job_id}/original")
+    assert resposta.status_code == 200
+    assert resposta.headers["content-type"] == "application/pdf"
+    assert resposta.content == pdf_documentos.read_bytes()
+
+
+def test_original_nao_e_cacheavel(cliente: TestClient, pdf_documentos: Path) -> None:
+    """Serve dado pessoal em claro: nao pode ficar em cache de browser."""
+    job_id = enviar(cliente, pdf_documentos).json()["id"]
+    resposta = cliente.get(f"/documentos/{job_id}/original")
+    assert resposta.headers["cache-control"] == "no-store"
+    assert resposta.headers["x-content-type-options"] == "nosniff"
+
+
+def test_original_de_id_inexistente_devolve_404(cliente: TestClient) -> None:
+    assert cliente.get(f"/documentos/{novo_job_id()}/original").status_code == 404
+
+
+@pytest.mark.parametrize("job_id", ["..", "nao-e-um-id", "%2e%2e", "a" * 31, "A" * 32])
+def test_original_com_id_malformado_nao_vira_caminho(
+    cliente: TestClient, job_id: str
+) -> None:
+    assert cliente.get(f"/documentos/{job_id}/original").status_code == 404
+
+
+def test_original_some_com_o_descarte(
+    cliente: TestClient, pdf_documentos: Path
+) -> None:
+    """O DELETE explicito leva o original junto — nao ha como rebaixa-lo."""
+    job_id = enviar(cliente, pdf_documentos).json()["id"]
+    assert cliente.get(f"/documentos/{job_id}/original").status_code == 200
+    assert cliente.delete(f"/documentos/{job_id}").status_code == 204
+    assert cliente.get(f"/documentos/{job_id}/original").status_code == 404
+
+
+def test_original_disponivel_antes_de_processar(
+    cliente_enfileirado: TestClient, pdf_documentos: Path
+) -> None:
+    """A interface pode buscar o PDF enquanto a deteccao ainda roda."""
+    job_id = enviar(cliente_enfileirado, pdf_documentos).json()["id"]
+    corpo = cliente_enfileirado.get(f"/documentos/{job_id}").json()
+    assert corpo["status"] == "recebido"
+    assert cliente_enfileirado.get(f"/documentos/{job_id}/original").status_code == 200

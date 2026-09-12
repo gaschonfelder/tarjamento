@@ -35,6 +35,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import FileResponse
 from rq import Queue
 from starlette.concurrency import run_in_threadpool
 
@@ -171,6 +172,32 @@ def criar_app(config: Config | None = None, fila: Queue | None = None) -> FastAP
                 status_code=status.HTTP_404_NOT_FOUND, detail="job nao encontrado"
             )
         return estado
+
+    @aplicacao.get(
+        "/documentos/{job_id}/original",
+        response_class=FileResponse,
+        summary="O PDF original, byte a byte",
+    )
+    def original(request: Request, job_id: str) -> FileResponse:
+        """O arquivo enviado, para a interface poder renderizá-lo.
+
+        Existe porque o browser NÃO guarda o ``File`` do upload entre
+        recarregamentos: sem esta rota, um refresh perde o documento mesmo com
+        o job vivo no servidor, e a tela de revisão não teria o que desenhar.
+
+        Serve dado pessoal em claro, como o resto da API. As proteções são as
+        mesmas — loopback por default, sem CORS, TTL curto e ``no-store`` pelo
+        middleware — e a validação passa pelo mesmo ``obter``, que destrói o
+        que venceu antes de responder.
+        """
+        armazenamento: Armazenamento = request.app.state.armazenamento
+        if armazenamento.obter(job_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="job nao encontrado"
+            )
+        return FileResponse(
+            armazenamento.caminho_pdf(job_id), media_type="application/pdf"
+        )
 
     @aplicacao.delete(
         "/documentos/{job_id}",
