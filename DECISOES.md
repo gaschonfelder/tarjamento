@@ -524,3 +524,108 @@ institucional nenhum. A âncora composta pegaria só a primeira. Propagar a
 marca para outras ocorrências do mesmo valor no documento é uma segunda
 decisão, com risco próprio — um número pessoal que coincida com um
 institucional seria publicado junto —, e não deve vir embutida na primeira.
+
+## Fase 4 — Redação real de PDF
+
+### 1. `apply_redactions`: o default de `graphics` deixa forma vetorial sobreviver
+
+> **Nota:** esta correção foi implementada e testada no commit anterior (`d7e063c`, limpeza de conteúdo — texto/imagem/gráfico/link); a menção aqui é recapitulação de contexto para o leitor entender o estado completo do módulo, não um achado novo da tarefa de limpeza de metadados.
+
+Achado ao implementar, não hipótese de leitura de documentação. `redator.
+redacao.redigir_pdf` marca cada entidade com `add_redact_annot` e aplica
+`apply_redactions` por página — mas os três parâmetros dessa chamada
+importam, e nenhum é o default do PyMuPDF:
+
+- `images=PDF_REDACT_IMAGE_PIXELS` **é** o default, mas fica explícito de
+  propósito: apaga só os pixels da imagem sob a área marcada, não a imagem
+  inteira. Verificado com uma imagem de fundo 400×400 e uma redação de
+  50×20 num canto — o resto da imagem sai intacto. Importa para o caso comum
+  de um carimbo ou campo pequeno sobre uma página inteira digitalizada:
+  `PDF_REDACT_IMAGE_REMOVE` faria a página toda sumir.
+- `graphics=PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED`, e **não** o default
+  (`REMOVE_IF_COVERED`) — aqui está o achado real. Reproduzido com o
+  `redigir_pdf` de verdade: um retângulo desenhado exatamente nas mesmas
+  coordenadas do bbox de um CPF (simulando uma tarja gráfica pré-existente,
+  ou qualquer elemento decorativo posicionado sobre o texto) **sobrevivia**
+  à redação com o default. `REMOVE_IF_COVERED` não considera bordas
+  coincidentes como "cobertas" o suficiente — só forma estritamente contida
+  com folga é removida. `REMOVE_IF_TOUCHED` resolve, ao custo de remover
+  qualquer forma que apenas toque a área (mais agressivo). Para uma
+  ferramenta cuja função é garantir que nada de dado pessoal sobreviva, esse
+  é o lado seguro do erro.
+- `text=PDF_REDACT_TEXT_REMOVE` é o comportamento central, sem ele não há
+  redação — fica explícito só para os três aparecerem juntos.
+
+**O que some de graça, sem parâmetro nenhum:** anotações que colidem com a
+área marcada — inclusive um link (`/Annots` tipo `Link`) — são descartadas
+por um mecanismo do PyMuPDF independente do `graphics`. Relevante para um
+link de verificação (QR/URL) cuja área caia sob uma entidade tarjada.
+
+`tests/test_redacao.py` tem os três testes que provam isso por inspeção
+direta do PDF de saída (`get_drawings()`, pixel a pixel, `get_links()`), não
+só por texto extraído — e o de forma vetorial falha de verdade se
+`graphics` voltar ao default, não é teste vácuo.
+
+### 2. Limpeza de metadados é incondicional, e cobre mais que os campos padrão
+
+Adicionada como etapa dentro de `redigir_pdf`, depois das redações de
+conteúdo e antes do save — não como módulo separado, e não como opção.
+
+- **`/Info`, campos customizados inclusos.** Investigado antes de assumir:
+  `doc.set_metadata({})` não edita campo por campo — com `/Info` já
+  existente, ele substitui a referência inteira no trailer por `null`.
+  Verificado gravando um campo fora do conjunto que `set_metadata` sequer
+  sabe nomear (`doc.xref_set_key(info_xref, "CampoCustomizado", ...)`): ele
+  desaparece do arquivo bruto depois do save com `garbage=4` — é o garbage
+  collector do PyMuPDF descartando o objeto órfão, e cobre qualquer campo,
+  não só os padrão. Não foi preciso varredura de xref adicional para `/Info`.
+- **XMP**, ao contrário, recebeu a varredura: `del_xml_metadata()` cobre o
+  caso referenciado pelo catálogo, mas um objeto `/Type /Metadata` solto
+  (não referenciado dali) escaparia. A varredura de todo o xref, zerando
+  qualquer objeto desse tipo, é a mesma técnica que `Document.scrub()` usa
+  internamente — `scrub()` em si não foi adotado porque faz mais coisa fora
+  de escopo (mexe em link, thumbnail, texto oculto).
+- **`AcroForm` e todo widget — removidos por completo, nunca redigidos.**
+  Decisão já tomada na fase de planejamento: um certificado de assinatura
+  carrega nome e CPF do signatário em DER binário dentro do widget,
+  invisível a qualquer extração de texto, e fora do alcance de
+  `apply_redactions` (não é conteúdo de página). `page.delete_widget` em
+  cada widget de cada página, mais a chave `/AcroForm` do catálogo anulada
+  (`xref_set_key(..., "AcroForm", "null")` — mesma convenção que o próprio
+  `scrub()` usa para `/Thumb`: o valor fica `null`, não a chave apagada, o
+  que já basta para `is_form_pdf` virar `False`).
+- **Anexos embutidos** e **JavaScript** (qualquer objeto `/S /JavaScript`
+  em qualquer xref — ação de abertura, de campo, de widget) seguem o mesmo
+  padrão de `scrub()`: sem exceção, sem parâmetro.
+
+`RelatorioRedacao` ganhou quatro campos para auditoria
+(`metadados_removidos`, `acroform_removido`, `anexos_removidos`,
+`javascript_removido`). Registram o que **havia** e foi removido, não se o
+passo rodou — ele sempre roda. `anexos_removidos == 0` significa "não havia
+anexo", não "a limpeza falhou".
+
+### 3. Optional Content (OCG/camadas): risco real, documentado, não tratado
+
+Investigado a pedido explícito, para não passar batido. Uma camada
+desligada por padrão (`doc.add_ocg(..., on=False)`) faz `page.get_text()` —
+e portanto `extract_pdf`, e portanto todo detector deste projeto — devolver
+texto vazio para o conteúdo daquela camada. Verificado empiricamente: o
+mesmo texto, na mesma posição, aparece com a camada ligada e desaparece com
+ela desligada.
+
+A consequência é séria: uma entidade escondida numa camada assim **nunca
+chega a ser detectada** — não é que a redação falhe nela, é que o pipeline
+inteiro não a vê. O dado permanece no arquivo, alcançável por qualquer
+leitor que ligue a camada, ou por um extrator de texto que (ao contrário do
+PyMuPDF) ignore o estado padrão de OCG — o que muitos fazem.
+
+**Por que não foi tratado agora:** nenhum PDF deste projeto — nem os
+gerados pelo gerador de teste, nem os PDFs reais de ata/ofício usados na
+suíte — usa Optional Content. Não há caso de uso real que justifique a
+complexidade de "forçar todas as camadas ligadas antes de extrair para
+detecção, mas preservar o estado original no resultado" (ou alternativa
+equivalente) sem um documento real que precise disso. Fica registrado aqui,
+não como lacuna silenciosa: se um PDF com camadas aparecer em produção,
+`redigir_pdf` não é, hoje, defesa contra dado pessoal escondido nelas — e
+`_verificar_optional_content` loga um aviso (nível `WARNING`) sempre que o
+documento tem qualquer OCG, exatamente para essa lacuna não ficar muda.
