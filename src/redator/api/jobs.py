@@ -251,6 +251,15 @@ def expirar_job(job_id: str, config: Config) -> bool:
     Confere o vencimento antes de apagar. Um job pode ter tido o TTL
     renovado, ou este agendamento pode ter atrasado; apagar sem olhar
     destruiria trabalho ainda válido.
+
+    Se ``armazenamento.remover`` não conseguir apagar o diretório (ver
+    ``ErroLimpeza`` em ``storage.py``), a exceção **não é capturada aqui** —
+    ela sobe e o RQ marca este agendamento como falho no seu próprio
+    registro de falhas, visível a quem opera. É a via correta para este
+    caminho especificamente: ele já roda em background, sem cliente HTTP
+    esperando resposta, então deixar o erro visível (em vez de engolir ou
+    inventar um retorno) é estritamente melhor que devolver ``False`` como se
+    fosse só "ainda não venceu".
     """
     armazenamento = Armazenamento(config.diretorio_base)
     estado = armazenamento.ler_estado(job_id)

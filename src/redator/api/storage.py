@@ -21,9 +21,11 @@ uma ferramenta interna, em que cada job é enfileirado uma vez, é suficiente.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -32,11 +34,65 @@ from pydantic import BaseModel, ValidationError
 
 from .schemas import JobResponse, JobStatus, PaginaResponse
 
-__all__ = ["Armazenamento", "job_id_valido", "novo_job_id"]
+__all__ = ["Armazenamento", "ErroLimpeza", "job_id_valido", "novo_job_id"]
+
+_log = logging.getLogger(__name__)
 
 _NOME_PDF = "original.pdf"
 _NOME_ESTADO = "estado.json"
 _NOME_RESULTADO = "resultado.json"
+
+#: Tentativas de `shutil.rmtree` antes de desistir e levantar erro. Ver
+#: :func:`_remover_com_retentativa` — existe por causa de uma falha real e
+#: intermitente no Windows, documentada no DECISOES.md (Fase 3, item 11).
+_TENTATIVAS_REMOCAO = 5
+_INTERVALO_RETENTATIVA_SEGUNDOS = 0.1
+
+
+class ErroLimpeza(RuntimeError):
+    """O diretório de um job não pôde ser apagado do disco.
+
+    Levantado por :meth:`Armazenamento.remover` quando o diretório ainda
+    existe depois de todas as tentativas. Quem chama decide o que fazer —
+    esta exceção não decide sozinha se o dado pessoal retido é aceitável.
+    """
+
+
+def _remover_com_retentativa(diretorio: Path) -> None:
+    """Apaga ``diretorio``, tentando de novo antes de desistir.
+
+    **Por que retentativa, e não uma tentativa só com ``ignore_errors``.** No
+    Windows, ``shutil.rmtree`` pode falhar mesmo que nosso código já tenha
+    fechado todo arquivo que abriu (via ``with``/``finally``, como em
+    ``pymupdf.open`` e no ``anyio.open_file`` do ``FileResponse``): o SO leva
+    um instante a mais para liberar o lock depois do ``close()`` — e um
+    antivírus ou indexador que tenha aberto o arquivo para escanear pode
+    segurá-lo por mais um punhado de milissegundos. ``ignore_errors=True``
+    mascarava exatamente isso: a função devolvia como se tivesse apagado, e o
+    diretório ficava para trás, calado. Reproduzido de forma determinística:
+    ver ``tests/test_api.py::test_remocao_sobrevive_a_handle_momentaneamente_aberto``.
+
+    Poucas tentativas curtas resolvem essa folga. Se depois delas o
+    diretório ainda existe, o erro sobe — não é mais aceitável engolir uma
+    falha de uma operação cuja função é garantir não-retenção de dado
+    pessoal.
+    """
+    ultimo_erro: OSError | None = None
+    for tentativa in range(_TENTATIVAS_REMOCAO):
+        if tentativa:
+            time.sleep(_INTERVALO_RETENTATIVA_SEGUNDOS)
+        try:
+            shutil.rmtree(diretorio)
+        except FileNotFoundError:
+            return  # outra thread/processo já apagou; o objetivo foi atingido
+        except OSError as erro:
+            ultimo_erro = erro
+            continue
+        else:
+            return
+    raise ErroLimpeza(
+        f"nao consegui apagar {diretorio} apos {_TENTATIVAS_REMOCAO} tentativas"
+    ) from ultimo_erro
 
 #: ``job_id`` só existe na forma que :func:`novo_job_id` produz. A validação
 #: não é cosmética: o id vira nome de diretório, e aceitar ``..`` ou barra
@@ -144,7 +200,7 @@ class Armazenamento:
         except ValidationError:
             # Estado corrompido e job perdido, nao job travado: some com ele
             # em vez de devolver 500 para sempre.
-            self.remover(job_id)
+            self._remover_ignorando_falha(job_id, motivo="estado corrompido")
             return None
 
     def obter(self, job_id: str) -> JobResponse | None:
@@ -158,7 +214,7 @@ class Armazenamento:
         if estado is None:
             return None
         if estado.expira_em <= datetime.now(UTC):
-            self.remover(job_id)
+            self._remover_ignorando_falha(job_id, motivo="job vencido")
             return None
         if estado.status is not JobStatus.PRONTO:
             return estado
@@ -182,17 +238,49 @@ class Armazenamento:
         Vale para os três caminhos de fim de vida — DELETE explícito, TTL
         vencido e varredura —, porque os três querem a mesma coisa: nenhum
         resto em disco.
+
+        Levanta :class:`ErroLimpeza` se o diretório existia mas não pôde ser
+        apagado (ver :func:`_remover_com_retentativa`) — não devolve ``False``
+        nesse caso, porque ``False`` aqui já significa "não havia nada", e os
+        dois são situações diferentes para quem chama.
         """
         if not job_id_valido(job_id):
             return False
         diretorio = self._diretorio(job_id)
         if not diretorio.is_dir():
             return False
-        shutil.rmtree(diretorio, ignore_errors=True)
-        return not diretorio.exists()
+        _remover_com_retentativa(diretorio)
+        return True
+
+    def _remover_ignorando_falha(self, job_id: str, *, motivo: str) -> None:
+        """Remove o job por uma via que já decidiu que ele está logicamente morto.
+
+        Usado por :meth:`ler_estado` (estado corrompido) e :meth:`obter` (TTL
+        vencido): nos dois casos a resposta a quem pergunta é a mesma — o job
+        não existe — esteja a limpeza física do disco ok ou não. Mas a falha
+        de limpeza em si nunca é silenciosa: vira log crítico, porque significa
+        dado pessoal potencialmente retido em disco além do prometido. Quem
+        varre o log tem no ``job_id`` e no ``motivo`` o suficiente para agir.
+        """
+        try:
+            self.remover(job_id)
+        except ErroLimpeza:
+            _log.critical(
+                "falha ao apagar job %s do disco (%s); dado pessoal pode ter"
+                " ficado retido alem do TTL prometido",
+                job_id,
+                motivo,
+                exc_info=True,
+            )
 
     def purgar_expirados(self) -> list[str]:
-        """Remove todo job já vencido e devolve os ids removidos."""
+        """Remove todo job já vencido e devolve os ids removidos.
+
+        Um job cuja remoção física falhou não entra em ``removidos`` — ele
+        continua no disco e será tentado de novo na próxima varredura, ou no
+        próximo acesso via :meth:`obter`. A falha em si é logada como crítica,
+        nunca engolida.
+        """
         if not self._base.is_dir():
             return []
         agora = datetime.now(UTC)
@@ -201,8 +289,16 @@ class Armazenamento:
             if not diretorio.is_dir() or not job_id_valido(diretorio.name):
                 continue
             estado = self.ler_estado(diretorio.name)
-            if (estado is None or estado.expira_em <= agora) and self.remover(
-                diretorio.name
-            ):
-                removidos.append(diretorio.name)
+            if estado is not None and estado.expira_em > agora:
+                continue
+            try:
+                if self.remover(diretorio.name):
+                    removidos.append(diretorio.name)
+            except ErroLimpeza:
+                _log.critical(
+                    "purgar_expirados: falha ao apagar job %s do disco; dado"
+                    " pessoal pode ter ficado retido alem do TTL prometido",
+                    diretorio.name,
+                    exc_info=True,
+                )
         return removidos

@@ -404,3 +404,123 @@ Os passos exatos — instalação, verificação do alcance a partir do Windows,
 processo que segura o WSL aberto e os três comandos para subir a pilha —
 estão no README, em **Desenvolvimento local: API, fila e worker**. Aqui fica
 só o porquê; lá, o como.
+
+### 11. Windows: `rmtree(ignore_errors=True)` pode não apagar nada, e ninguém saberia
+
+Terceira falha silenciosa específica de Windows, na mesma família dos itens
+8 e 9 (fork ausente, lock do scheduler): todas as três só aparecem rodando de
+verdade nesta plataforma, e todas as três são silenciosas por padrão — o
+sintoma é "tudo parece saudável" e o dado pessoal fica retido além do
+prometido.
+
+`Armazenamento.remover` apagava o diretório do job com
+`shutil.rmtree(diretorio, ignore_errors=True)`. No Windows, `rmtree` pode
+falhar mesmo com todo arquivo do nosso próprio código fechado corretamente
+(`pymupdf.open` e o `anyio.open_file` do `FileResponse` de `/original` já
+fecham em `finally`/`async with`) — o SO leva um instante a mais para
+liberar o lock depois do `close()`, e nesse intervalo um antivírus ou
+indexador que tenha aberto o arquivo para escanear pode segurá-lo por mais
+alguns milissegundos. `ignore_errors=True` mascarava exatamente isso: a
+função devolvia como se tivesse apagado — `not diretorio.exists()` também
+dava `False` de forma consistente com "apaguei" — e o diretório inteiro
+(PDF original incluso) ficava para trás, sem nenhum log denunciando.
+
+Reproduzido de forma determinística (não é hipótese): abrir o
+`original.pdf` de um job e chamar `remover` enquanto o handle está aberto
+falha a apagar o diretório, silenciosamente, todas as vezes — e rodando a
+suíte de testes em sequência (`tests/test_api.py`), isso batia em ~5-10% das
+execuções de `test_job_vencido_nao_e_servido_mesmo_sem_scheduler` e de
+`test_original_some_com_o_descarte`, cada uma abrindo e fechando o PDF (via
+processamento síncrono ou via `/original`) pouco antes de o teste seguinte —
+ou o próprio DELETE — tentar remover o mesmo diretório.
+
+**Correção:** `_remover_com_retentativa` tenta `shutil.rmtree` (sem
+`ignore_errors`) até 5 vezes com 0.1s entre tentativas — suficiente para a
+folga do SO/antivírus, insuficiente para mascarar um problema de verdade. Se
+o diretório ainda existir depois de esgotadas as tentativas, `remover`
+levanta `ErroLimpeza` em vez de devolver um booleano que finge sucesso.
+
+Cada chamador decide o que fazer com essa exceção, porque o significado é
+diferente em cada caminho:
+
+- `obter`/`ler_estado` (TTL vencido ou estado corrompido): o job já está
+  logicamente morto — a resposta ao cliente é 404 de qualquer jeito. A
+  exceção é capturada, vira **log crítico** (dado pessoal potencialmente
+  retido além do TTL) e o job continua tratado como ausente. Não fazia
+  sentido virar 500 aqui: quem pergunta por um job vencido não pode ver a
+  diferença entre "nunca existiu" e "venceu", e uma falha de limpeza física
+  não muda essa resposta.
+- `DELETE /documentos/{id}`: o cliente pediu a destruição explicitamente —
+  aqui fingir sucesso (204) seria pior que nos outros casos. Vira **500**,
+  com log crítico, para o cliente saber que precisa tentar de novo.
+- `purgar_expirados`: um job preso não entra na lista de removidos nem trava
+  a varredura dos demais — fica para a próxima passada (ou para o próximo
+  `obter`), e a falha é logada como crítica a cada tentativa malsucedida.
+- `expirar_job` (o `expirar_job` do scheduler): a exceção **não é
+  capturada** — sobe e o RQ marca o agendamento como falho no seu próprio
+  registro, visível a quem opera. É background, sem cliente HTTP esperando;
+  deixar o erro visível ali é melhor que inventar um retorno.
+
+**Em produção Linux** o mesmo código de retentativa continua valendo — não é
+específico de Windows, só *raramente necessário* lá, porque o SO libera o
+lock de arquivo de forma mais previsível. Não custa nada mantê-lo: a
+diferença é só quantas vezes, na prática, a segunda tentativa é chamada.
+
+## Fase 3b — Perfil de redação
+
+### 1. A decisão é só por tipo, e a exceção institucional ficou de fora
+
+`redator.perfil` decide TARJAR ou PUBLICAR a partir de `PERFIL_PADRAO`, um
+dict por `EntityType`. Três tipos são publicados — CNPJ, PROCESSO_CNJ e NOME —
+e todo o resto é tarjado.
+
+A exceção óbvia que **não** foi implementada: dado **institucional**. O
+telefone da própria fundação no cabeçalho de um ofício é público, e deveria
+sair publicado; hoje sai tarjado, igual ao celular de um cidadão. Ficou de fora
+porque não há sinal que a sustente, e implementá-la sem sinal seria inventar
+um.
+
+### 2. Investigação: a `Entity` não tem como distinguir institucional de pessoal
+
+Os campos de `Entity` são `type`, `start`, `end`, `text`, `confidence`,
+`detector`, `validated`, `context` e `requires_review`. Nenhum carrega essa
+informação, e os dois candidatos aparentes não servem:
+
+- **`allowlist` do golden set é anotação de teste, não sinal de produção.**
+  Existe só nos `.json` de `tests/fixtures/textos/` (o `doc_teste_1_oficio.json`
+  marca CNPJ, CEP, telefone e e-mail da fundação como `allowlist: true`) e só é
+  lido por `tests/test_golden_set.py`. Nenhum detector o produz; nenhum código
+  em `src/` o conhece.
+- **`context` é o rótulo da âncora, não uma classificação.** Medido no próprio
+  ofício: o telefone precedido de `Telefone institucional:` sai com
+  `context='Telefone'`; o telefone pessoal do contrato, precedido de
+  `telefone`, sai com `context='telefone'`. A palavra decisiva é descartada no
+  caminho — a âncora reconhece "telefone" e para ali. Classificar por
+  `context` seria distinguir os dois pela **maiúscula**.
+
+`tests/test_perfil.py::test_telefone_institucional_e_pessoal_sao_ambos_tarjados`
+fixa essa ausência: os dois saem TARJAR, e o teste mostra que o rótulo está no
+texto mas não chega à `Entity`. Se ele quebrar porque o institucional passou a
+ser publicado, a primeira pergunta é de onde veio o sinal.
+
+### 3. O caminho mais barato quando a exceção for retomada
+
+O ofício já tem a pista literal: **`Telefone institucional:`**. Uma **âncora
+composta** que reconheça esse rótulo específico (e seus pares —
+`E-mail institucional:`, e o que mais aparecer em documento real) e gere um
+**sinal próprio na `Entity`** — um campo novo, não `context` reaproveitado — é
+a implementação mais direta. Com o sinal no dado, a regra entra dentro de
+`decidir_acao`, antes da consulta ao perfil, e a assinatura não muda: é o mesmo
+princípio de `origem_ocr` (Fase 2.5, item 4), marcado no dado para não haver
+como esquecer de passá-lo.
+
+`context` não deve ser o veículo, mesmo parecendo mais curto: ele alimenta a
+confiança e a revisão, e misturar nele uma classificação faria o mesmo campo
+responder a duas perguntas diferentes.
+
+**Limite já visível dessa abordagem**, no mesmo ofício: o número aparece duas
+vezes, e a segunda (`...ou pelo telefone (15) 3238-0000`) não tem rótulo
+institucional nenhum. A âncora composta pegaria só a primeira. Propagar a
+marca para outras ocorrências do mesmo valor no documento é uma segunda
+decisão, com risco próprio — um número pessoal que coincida com um
+institucional seria publicado junto —, e não deve vir embutida na primeira.

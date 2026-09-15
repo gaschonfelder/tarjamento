@@ -95,7 +95,7 @@ ENTITY_METADATA: dict[EntityType, EntityMetadata] = {
     ),
     EntityType.CNS: EntityMetadata(LegalCategory.PESSOAL, DetectionMethod.VALIDADO_DV),
     EntityType.PROCESSO_CNJ: EntityMetadata(
-        LegalCategory.PESSOAL, DetectionMethod.VALIDADO_DV
+        LegalCategory.PUBLICO_OBRIGATORIO, DetectionMethod.VALIDADO_DV
     ),
     EntityType.CARTAO_CREDITO: EntityMetadata(
         LegalCategory.PESSOAL, DetectionMethod.VALIDADO_DV

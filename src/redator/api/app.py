@@ -42,7 +42,7 @@ from starlette.concurrency import run_in_threadpool
 from .config import Config
 from .jobs import criar_fila, enfileirar
 from .schemas import JobResponse
-from .storage import Armazenamento, novo_job_id
+from .storage import Armazenamento, ErroLimpeza, novo_job_id
 
 __all__ = ["app", "criar_app", "servir"]
 
@@ -145,8 +145,17 @@ def criar_app(config: Config | None = None, fila: Queue | None = None) -> FastAP
             )
         except Exception:  # noqa: BLE001 — Redis fora do ar tem tipo demais
             # Sem fila não há job: some com o PDF em vez de deixá-lo no disco
-            # esperando um worker que nunca virá.
-            await run_in_threadpool(armazenamento.remover, job_id)
+            # esperando um worker que nunca virá. Best-effort: se a própria
+            # limpeza falhar, o critical fica registrado, mas quem chamou já
+            # vai receber 503 pela falha de fila, que é o problema principal.
+            try:
+                await run_in_threadpool(armazenamento.remover, job_id)
+            except ErroLimpeza:
+                _log.critical(
+                    "falha ao limpar job %s apos falha de enfileiramento",
+                    job_id,
+                    exc_info=True,
+                )
             _log.exception("nao consegui enfileirar o job %s", job_id)
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -205,9 +214,28 @@ def criar_app(config: Config | None = None, fila: Queue | None = None) -> FastAP
         summary="Destrói o job e tudo que ele deixou em disco",
     )
     def descartar(request: Request, job_id: str) -> Response:
-        """Antecipa o TTL: é o que a interface chama ao terminar a revisão."""
+        """Antecipa o TTL: é o que a interface chama ao terminar a revisão.
+
+        Diferente do GET (que só precisa que o job pareça morto), aqui quem
+        chamou pediu a destruição explicitamente — se a limpeza física falhar
+        depois das retentativas, não faz sentido devolver 204 como se tivesse
+        funcionado. Vira 500, registrado como crítico, para o cliente saber
+        que precisa tentar de novo (ou alguém precisa olhar o disco).
+        """
         armazenamento: Armazenamento = request.app.state.armazenamento
-        if not armazenamento.remover(job_id):
+        try:
+            removido = armazenamento.remover(job_id)
+        except ErroLimpeza:
+            _log.critical(
+                "falha ao remover job %s por pedido explicito (DELETE)",
+                job_id,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="falha ao remover o job do disco; tente novamente",
+            ) from None
+        if not removido:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="job nao encontrado"
             )

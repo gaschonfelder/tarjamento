@@ -19,6 +19,8 @@ que é o que a tarefa pede e também o que o scheduler faria.
 
 from __future__ import annotations
 
+import logging
+import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -34,7 +36,7 @@ from redator.api.app import criar_app
 from redator.api.config import Config
 from redator.api.jobs import expirar_job, extrair, processar_documento, purgar_expirados
 from redator.api.schemas import JobStatus
-from redator.api.storage import Armazenamento, novo_job_id
+from redator.api.storage import Armazenamento, ErroLimpeza, novo_job_id
 
 PDF_REAL = (
     Path(__file__).parent
@@ -382,6 +384,145 @@ def test_purgar_expirados_varre_so_o_vencido(
 
     assert not (armazenamento.base / vencido).exists()
     assert (armazenamento.base / vivo).is_dir()
+
+
+# --------------------------------------------------------------------------- #
+# Armazenamento.remover — retentativa e falha visível (Windows)
+#
+# Achado intermitente: no Windows, ``shutil.rmtree`` pode falhar mesmo com
+# todo arquivo do nosso próprio código fechado corretamente — o SO demora um
+# instante a mais para liberar o lock depois do close(), e nesse intervalo um
+# antivírus/indexador que tenha aberto o arquivo pode segurá-lo por mais um
+# punhado de milissegundos. Ver DECISOES.md, Fase 3, item 11.
+# --------------------------------------------------------------------------- #
+
+
+def test_remocao_sobrevive_a_handle_momentaneamente_aberto(
+    cliente: TestClient, pdf_documentos: Path, armazenamento: Armazenamento
+) -> None:
+    """Reproduz o cenário do achado: um handle aberto no instante da remoção.
+
+    Simula o antivírus/indexador (ou o instante entre o ``close()`` do nosso
+    código e o SO liberar o lock de verdade): o arquivo está aberto quando
+    ``remover`` é chamado, e é fechado pouco depois, ainda dentro da janela de
+    retentativa. Antes desta correção (``shutil.rmtree(..., ignore_errors=True)``
+    numa tentativa só), isso apagava o diretório pela metade e devolvia
+    sucesso de qualquer jeito; a asserção abaixo falha nesse regime.
+    """
+    job_id = enviar(cliente, pdf_documentos).json()["id"]
+    diretorio = armazenamento.base / job_id
+    handle = (diretorio / "original.pdf").open("rb")
+    try:
+        liberador = threading.Timer(0.15, handle.close)
+        liberador.start()
+
+        assert armazenamento.remover(job_id) is True
+        assert not diretorio.exists()
+    finally:
+        liberador.join()
+        if not handle.closed:
+            handle.close()
+
+
+def test_remocao_levanta_erro_se_handle_nunca_libera(
+    cliente: TestClient, pdf_documentos: Path, armazenamento: Armazenamento
+) -> None:
+    """Esgotadas as retentativas, o erro sobe — nunca mais é engolido."""
+    job_id = enviar(cliente, pdf_documentos).json()["id"]
+    diretorio = armazenamento.base / job_id
+    handle = (diretorio / "original.pdf").open("rb")
+    try:
+        with pytest.raises(ErroLimpeza):
+            armazenamento.remover(job_id)
+        # A falha foi visível, mas nao destruiu o que ainda podia ser
+        # limpo depois: o diretorio continua la para a proxima tentativa.
+        assert diretorio.is_dir()
+    finally:
+        handle.close()
+
+    # Com o handle liberado, uma nova tentativa resolve sozinha.
+    assert armazenamento.remover(job_id) is True
+    assert not diretorio.exists()
+
+
+def test_obter_de_job_vencido_devolve_404_mesmo_se_limpeza_falhar(
+    cliente: TestClient,
+    pdf_documentos: Path,
+    armazenamento: Armazenamento,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GET nunca serve o que venceu, nem quando a limpeza física falha.
+
+    O job já está logicamente morto (TTL vencido); a API responde 404 de
+    qualquer jeito. Mas a falha de limpeza não pode desaparecer: tem de virar
+    log crítico, porque é dado pessoal potencialmente retido além do TTL
+    prometido.
+    """
+    job_id = enviar(cliente, pdf_documentos).json()["id"]
+    estado = armazenamento.ler_estado(job_id)
+    assert estado is not None
+    armazenamento.escrever_estado(
+        estado.model_copy(
+            update={"expira_em": datetime.now(UTC) - timedelta(seconds=1)}
+        )
+    )
+
+    def _sempre_falha(self: Armazenamento, job_id: str) -> bool:
+        raise ErroLimpeza("simulado: handle nunca libera")
+
+    monkeypatch.setattr(Armazenamento, "remover", _sempre_falha)
+
+    with caplog.at_level(logging.CRITICAL, logger="redator.api.storage"):
+        resposta = cliente.get(f"/documentos/{job_id}")
+
+    assert resposta.status_code == 404
+    assert any(r.levelno == logging.CRITICAL for r in caplog.records)
+
+
+def test_delete_devolve_500_se_limpeza_falhar_persistentemente(
+    cliente: TestClient,
+    pdf_documentos: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DELETE pediu destruição explícita: não pode fingir sucesso (204)."""
+    job_id = enviar(cliente, pdf_documentos).json()["id"]
+
+    def _sempre_falha(self: Armazenamento, job_id: str) -> bool:
+        raise ErroLimpeza("simulado: handle nunca libera")
+
+    monkeypatch.setattr(Armazenamento, "remover", _sempre_falha)
+
+    assert cliente.delete(f"/documentos/{job_id}").status_code == 500
+
+
+def test_purgar_expirados_pula_job_cuja_limpeza_falha_e_continua(
+    cliente: TestClient,
+    pdf_documentos: Path,
+    config: Config,
+    armazenamento: Armazenamento,
+) -> None:
+    """Um job preso não trava a varredura dos outros, nem finge removido."""
+    preso = enviar(cliente, pdf_documentos).json()["id"]
+    vivo_mas_vencido = enviar(cliente, pdf_documentos).json()["id"]
+    for job_id in (preso, vivo_mas_vencido):
+        estado = armazenamento.ler_estado(job_id)
+        assert estado is not None
+        armazenamento.escrever_estado(
+            estado.model_copy(update={"expira_em": datetime.now(UTC) - timedelta(1)})
+        )
+
+    diretorio_preso = armazenamento.base / preso
+    handle = (diretorio_preso / "original.pdf").open("rb")
+    try:
+        removidos = purgar_expirados(config)
+        assert removidos == [vivo_mas_vencido]
+        assert diretorio_preso.is_dir()
+    finally:
+        handle.close()
+
+    # liberado o handle, a proxima varredura termina o servico
+    assert purgar_expirados(config) == [preso]
 
 
 def test_ttl_configuravel_chega_ao_job(tmp_path: Path, pdf_documentos: Path) -> None:
