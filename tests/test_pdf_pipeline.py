@@ -10,7 +10,15 @@ import pytest
 
 from redator.detectors import TODOS_DETECTORES
 from redator.entities import Entity, EntityType
-from redator.pdf import bboxes_for_span, extract_pdf, gerar_pdf_debug, process_pdf
+from redator.pdf import (
+    CharBox,
+    PageExtraction,
+    bboxes_for_entity,
+    bboxes_for_span,
+    extract_pdf,
+    gerar_pdf_debug,
+    process_pdf,
+)
 
 DETECTORES = list(TODOS_DETECTORES)
 
@@ -125,6 +133,99 @@ def test_pagina_em_branco_no_meio_nao_desloca_as_demais(
     assert [e.text for e in por_tipo(resultado[2], EntityType.CPF)] == [
         "111.444.777-35"
     ]
+
+
+# --------------------------------------------------------------------------- #
+# bboxes_for_entity: tarja parcial de CPF (padrao DOU), so em origem nativa
+# --------------------------------------------------------------------------- #
+
+
+def _entidade(tipo: EntityType, texto: str, *, start: int = 0) -> Entity:
+    return Entity(
+        type=tipo,
+        start=start,
+        end=start + len(texto),
+        text=texto,
+        confidence=0.99,
+        detector="teste",
+    )
+
+
+def _pagina_nativa(texto: str) -> PageExtraction:
+    """Uma ``CharBox`` por caractere — a granularidade real de ``extract_pdf``."""
+    caixas = [
+        CharBox(char=c, bbox=(i * 10.0, 0.0, (i + 1) * 10.0, 12.0), page=0)
+        for i, c in enumerate(texto)
+    ]
+    return PageExtraction(page=0, text=texto, char_boxes=caixas, origem_ocr=False)
+
+
+def _pagina_ocr(texto: str) -> PageExtraction:
+    """A mesma caixa repetida para todo caractere — a granularidade real do OCR.
+
+    Cada caractere de uma palavra reconhecida carrega a caixa da PALAVRA
+    inteira, não a de um glifo — é exatamente por isso que não há como isolar
+    só 5 dos 11 dígitos aqui dentro, e ``bboxes_for_entity`` nem tenta.
+    """
+    caixa_da_palavra = (0.0, 0.0, len(texto) * 10.0, 12.0)
+    caixas = [CharBox(char=c, bbox=caixa_da_palavra, page=0) for c in texto]
+    return PageExtraction(page=0, text=texto, char_boxes=caixas, origem_ocr=True)
+
+
+def test_bboxes_for_entity_cpf_nativo_e_5_caixas_pequenas() -> None:
+    """3 primeiros + 2 últimos dígitos: 5 caixas, não uma cobrindo o span inteiro."""
+    texto = "529.982.247-25"
+    pagina = _pagina_nativa(texto)
+    entidade = _entidade(EntityType.CPF, texto)
+
+    caixas = bboxes_for_entity(pagina, entidade)
+
+    assert caixas == [pagina.char_boxes[i].bbox for i in (0, 1, 2, 12, 13)]
+
+
+def test_bboxes_for_entity_cpf_nativo_nao_cobre_o_meio() -> None:
+    """Nenhuma caixa parcial toca os 6 dígitos do meio nem a pontuação."""
+    texto = "529.982.247-25"
+    pagina = _pagina_nativa(texto)
+    entidade = _entidade(EntityType.CPF, texto)
+
+    caixas = set(bboxes_for_entity(pagina, entidade))
+    meio = {pagina.char_boxes[i].bbox for i in range(3, 12)}
+    assert not caixas & meio
+
+
+def test_bboxes_for_entity_cpf_ocr_e_span_inteiro() -> None:
+    """Granularidade por palavra: sem como isolar dígitos, cai no span inteiro."""
+    texto = "529.982.247-25"
+    pagina = _pagina_ocr(texto)
+    entidade = _entidade(EntityType.CPF, texto)
+
+    caixas = bboxes_for_entity(pagina, entidade)
+
+    assert caixas == bboxes_for_span(pagina, entidade.start, entidade.end)
+    assert len(caixas) == 1
+
+
+def test_bboxes_for_entity_outro_tipo_e_sempre_span_inteiro() -> None:
+    """RG (qualquer tipo que não seja CPF) nunca usa o padrão DOU."""
+    texto = "12345678"
+    pagina = _pagina_nativa(texto)
+    entidade = _entidade(EntityType.RG, texto)
+
+    assert bboxes_for_entity(pagina, entidade) == bboxes_for_span(
+        pagina, entidade.start, entidade.end
+    )
+
+
+def test_bboxes_for_entity_cpf_mascarado_e_sempre_span_inteiro() -> None:
+    """CPF_MASCARADO não ganha um padrão DOU novo: usa o caminho genérico."""
+    texto = "529.XXX.XXX-25"
+    pagina = _pagina_nativa(texto)
+    entidade = _entidade(EntityType.CPF_MASCARADO, texto)
+
+    assert bboxes_for_entity(pagina, entidade) == bboxes_for_span(
+        pagina, entidade.start, entidade.end
+    )
 
 
 # --------------------------------------------------------------------------- #

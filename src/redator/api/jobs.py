@@ -27,7 +27,7 @@ from rq import Queue
 from ..detectors import TODOS_DETECTORES
 from ..entities import Entity
 from ..ocr import extract_pdf_scanned
-from ..pdf import DocumentExtraction, PageExtraction, bboxes_for_span, extract_pdf
+from ..pdf import DocumentExtraction, PageExtraction, bboxes_for_entity, extract_pdf
 from ..pdf.pipeline import process_pdf
 from .config import Config
 from .schemas import EntidadeResponse, JobStatus, PaginaResponse
@@ -149,7 +149,7 @@ def _converter(entidade: Entity, pagina: PageExtraction) -> EntidadeResponse:
         context=entidade.context,
         requires_review=entidade.requires_review,
         validated=entidade.validated,
-        bboxes=bboxes_for_span(pagina, entidade.start, entidade.end),
+        bboxes=bboxes_for_entity(pagina, entidade),
         texto_original=entidade.text,
         pagina=pagina.page,
     )

@@ -14,6 +14,41 @@ caixa são de fato removidos do PDF, não apenas cobertos. Entidades a
 publicar não são tocadas — a decisão já foi tomada em ``redator.perfil``, e
 este módulo só a executa.
 
+**Tarja parcial de CPF (padrão DOU) — só quando a origem é caractere.** Um
+CPF (não ``CPF_MASCARADO``) recebe, por padrão, uma caixa por DÍGITO das
+pontas — os 3 primeiros e os 2 últimos, a mesma regra de
+:func:`redator.masking.mask_cpf` —, deixando os 6 do meio e a pontuação como
+texto extraível. A geometria vem de
+:func:`redator.pdf.pipeline.bboxes_for_entity`, a mesma função que monta a
+prévia que a interface de revisão mostra: o que o revisor vê é exatamente o
+que sai no arquivo final.
+
+Isso só é possível quando ``PageExtraction.origem_ocr`` é ``False`` — texto
+nativo do PDF, com uma ``CharBox`` por caractere. Quando a origem é OCR
+(``extract_pdf_scanned``), a granularidade é por PALAVRA: uma única caixa
+cobre o CPF inteiro, e não há como isolar 5 de 11 dígitos dentro dela. Nesse
+caso o CPF cai no mesmo caminho de qualquer outro tipo — tarja do span
+inteiro —, e ``bboxes_for_entity`` decide isso sozinho a partir do mesmo
+sinal ``origem_ocr``: não é uma lacuna silenciosa, é a granularidade real da
+extração impondo o que é possível.
+
+**``CPF_MASCARADO`` nunca recebe redação automática.** Um CPF que já chegou
+mascarado no documento original (``529.XXX.XXX-25``, ``***.982.247-**``)
+tem seu detector marcando ``requires_review=True`` em toda ocorrência (ver
+``redator.detectors.contato._DetectorCpfMascarado``) — mas mesmo com
+``acao == TARJAR``, este módulo não desenha nada sobre ele: as pontas ou o
+meio que já estão ocultos no original não têm como ser "re-tarjados" de
+forma consistente com o padrão DOU, porque a informação de origem já não
+está toda visível para decidir o que é dígito e o que já é máscara. Fica
+contado à parte (``RelatorioRedacao.total_cpf_mascarado_sinalizados``), nunca
+como tarjado nem como publicado — quem revisa decide se aceita como está ou
+desenha uma tarja MANUAL por cima (mecanismo já existente, ver
+``redacoes_manuais_por_pagina`` abaixo). Por depender deste contrato,
+``redator.verificacao`` exclui ``CPF_MASCARADO`` do que considera "deveria
+ter sumido": cobrar a ausência de algo que este módulo garante nunca remover
+seria a verificação reprovar todo documento com um CPF mascarado, mesmo
+funcionando exatamente como projetado.
+
 **Os três parâmetros de ``apply_redactions``, e por que não são o default.**
 
 - ``images=PDF_REDACT_IMAGE_PIXELS`` (é o default do PyMuPDF, mas fica
@@ -118,7 +153,8 @@ from pathlib import Path
 import pymupdf
 
 from .detectors import TODOS_DETECTORES
-from .pdf import bboxes_for_span, extract_pdf
+from .entities import EntityType
+from .pdf import bboxes_for_entity, extract_pdf
 from .perfil import AcaoRedacao, EntidadeComAcao
 from .verificacao import RelatorioVerificacao, verificar_redacao
 
@@ -155,6 +191,11 @@ class RelatorioRedacao:
     (ver :func:`redigir_pdf`) — bboxes marcados na interface sem ``Entity``
     por trás, por isso fora de ``total_entidades_tarjadas``.
 
+    ``total_cpf_mascarado_sinalizados`` conta ``CPF_MASCARADO`` com
+    ``acao == TARJAR`` que passaram pelo laço sem receber nenhuma marca — nem
+    tarjados nem publicados, por isso um contador à parte (ver docstring do
+    módulo).
+
     ``verificacao`` é o que um leitor independente achou ao reabrir o arquivo
     — os campos acima são o que a redação AFIRMA; este é o que foi CONFERIDO.
     Se os dois discordarem, vale ``verificacao``.
@@ -163,6 +204,7 @@ class RelatorioRedacao:
     total_entidades_tarjadas: int
     total_entidades_publicadas: int
     total_redacoes_manuais: int
+    total_cpf_mascarado_sinalizados: int
     paginas_processadas: int
     hash_original: str
     hash_resultado: str
@@ -289,13 +331,18 @@ def redigir_pdf(
     """Grava em ``caminho_saida`` uma cópia com toda entidade TARJAR removida.
 
     Para cada página com entidades: cada uma com ``acao == TARJAR`` tem seus
-    ``bboxes_for_span`` marcados com ``add_redact_annot(fill=(0, 0, 0))``, e
+    ``bboxes_for_entity`` marcados com ``add_redact_annot(fill=(0, 0, 0))``, e
     ao final da página ``apply_redactions()`` aplica tudo de uma vez — é
     isso que efetivamente apaga o texto e os desenhos sob a área, e não só
     desenha por cima. Os parâmetros de ``apply_redactions`` não são o
     default do PyMuPDF; o porquê de cada um está no docstring do módulo.
     Entidades com ``acao == PUBLICAR`` são ignoradas: nem marcadas, nem
-    contadas como tarjadas.
+    contadas como tarjadas. ``CPF_MASCARADO`` também não é marcado, mesmo com
+    ``acao == TARJAR`` — ver "``CPF_MASCARADO`` nunca recebe redação
+    automática" no docstring do módulo. Um CPF comum recebe tarja parcial
+    (padrão DOU) ou total, dependendo da origem da extração — ver "Tarja
+    parcial de CPF" no docstring do módulo; os dois casos usam
+    ``bboxes_for_entity`` e o chamador não precisa distinguir.
 
     ``redacoes_manuais_por_pagina`` são áreas marcadas à mão na interface de
     revisão, sem ``Entity`` por trás — por isso bboxes diretos, e não um span
@@ -336,6 +383,7 @@ def redigir_pdf(
     total_tarjadas = 0
     total_publicadas = 0
     total_manuais = 0
+    total_cpf_mascarado_sinalizados = 0
 
     documento = pymupdf.open(str(entrada))
     try:
@@ -349,7 +397,12 @@ def redigir_pdf(
                     total_publicadas += 1
                     continue
                 entidade = entidade_com_acao.entity
-                caixas = bboxes_for_span(pagina_extraida, entidade.start, entidade.end)
+                if entidade.type is EntityType.CPF_MASCARADO:
+                    # Nunca redigido automaticamente — ver docstring do
+                    # modulo. Nem tarjado nem publicado: contado a parte.
+                    total_cpf_mascarado_sinalizados += 1
+                    continue
+                caixas = bboxes_for_entity(pagina_extraida, entidade)
                 for bbox in caixas:
                     pagina_pdf.add_redact_annot(pymupdf.Rect(*bbox), fill=(0, 0, 0))
                 total_tarjadas += 1
@@ -394,6 +447,7 @@ def redigir_pdf(
         total_entidades_tarjadas=total_tarjadas,
         total_entidades_publicadas=total_publicadas,
         total_redacoes_manuais=total_manuais,
+        total_cpf_mascarado_sinalizados=total_cpf_mascarado_sinalizados,
         paginas_processadas=len(paginas_numeros),
         hash_original=_sha256_arquivo(entrada),
         hash_resultado=_sha256_arquivo(saida),

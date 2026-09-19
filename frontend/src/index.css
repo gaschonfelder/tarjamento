@@ -2,7 +2,7 @@
  * Um arquivo só: a tela é uma, e espalhar isso em módulos por componente
  * custaria mais navegação do que organiza.
  *
- * As quatro aparências de tarja são o centro do arquivo — é por elas que o
+ * As cinco aparências de tarja são o centro do arquivo — é por elas que o
  * revisor distingue, de relance, o que o detector sabe de cada achado.
  */
 
@@ -23,6 +23,9 @@
   --tarja-revisao: 245 158 11;
   /* Desenhada à mão pelo revisor. */
   --tarja-manual: 56 189 248;
+  /* CPF já mascarado no original: nem azul (manual) nem âmbar (revisão
+     genérica) — precisa ser óbvio que é outra coisa. */
+  --tarja-mascarado: 168 85 247;
 }
 
 * {
@@ -255,6 +258,11 @@ button {
 .tarja--manual {
   --cor: var(--tarja-manual);
   border-style: solid;
+}
+.tarja--mascarado {
+  --cor: var(--tarja-mascarado);
+  border-style: dotted;
+  border-width: 2px;
 }
 
 /* Rejeitada não some: fica fantasma e tracejada, para dar para desfazer. */
@@ -501,6 +509,7 @@ button {
 }
 .amostra--revisao { --cor: var(--tarja-revisao); }
 .amostra--manual { --cor: var(--tarja-manual); }
+.amostra--mascarado { --cor: var(--tarja-mascarado); }
 
 .painel__lista {
   display: flex;
@@ -531,6 +540,7 @@ button {
 .item--sem_contexto { --cor: var(--tarja-sem-contexto); }
 .item--revisao { --cor: var(--tarja-revisao); }
 .item--manual { --cor: var(--tarja-manual); }
+.item--mascarado { --cor: var(--tarja-mascarado); }
 
 .item:hover {
   border-color: var(--borda);

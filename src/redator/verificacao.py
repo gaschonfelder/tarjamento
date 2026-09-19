@@ -124,12 +124,23 @@ def _verificar_texto(
     devia ter saído, encontrado em qualquer página do resultado, é vazamento
     — e é reportado na página em que foi ENCONTRADO. PUBLICAR nunca entra no
     conjunto de busca, então re-encontrar um CNPJ publicado não acusa nada.
+
+    ``CPF_MASCARADO`` também nunca entra, mesmo com ``acao == TARJAR``:
+    ``redator.redacao`` garante, por contrato, que nunca desenha nada sobre
+    ele (ver docstring daquele módulo) — cobrar a ausência de algo que a
+    redação nunca promete remover reprovaria todo documento com um CPF já
+    mascarado, mesmo funcionando exatamente como projetado. Um CPF comum
+    (tipo ``CPF``) continua exigido normalmente: a tarja parcial (padrão DOU)
+    remove os 5 dígitos das pontas, e o que sobra — 6 dígitos soltos e
+    pontuação — não fecha o texto original de 11 dígitos que ``proibidas``
+    guarda, então não há correspondência e não há falso positivo.
     """
     proibidas = {
         _chave_texto(item.entity.type, item.entity.text)
         for itens in esperadas.values()
         for item in itens
         if item.acao is AcaoRedacao.TARJAR
+        and item.entity.type is not EntityType.CPF_MASCARADO
     }
     if not proibidas:
         return []

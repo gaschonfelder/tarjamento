@@ -165,6 +165,58 @@ def test_publicar_reencontrado_na_saida_redigida_nao_reprova(
     assert verificar_redacao(saida, DETECTORES, entidades).aprovado is True
 
 
+def test_cpf_mascarado_intocado_nao_e_vazamento(
+    gerador: ModuleType, tmp_path: Path
+) -> None:
+    """redator.redacao nunca desenha nada sobre CPF_MASCARADO — cobrar a
+
+    ausencia de algo que a redacao nunca promete remover reprovaria todo
+    documento com um CPF ja mascarado, mesmo funcionando como projetado.
+    """
+    entrada = gerador.gerar_pdf(tmp_path / "mascarado.pdf", ["CPF: ***.982.247-**"])
+    entidades = _entidades_por_pagina(entrada)
+    saida = tmp_path / "redigido.pdf"
+    redigir_pdf(entrada, saida, entidades)
+
+    relatorio = verificar_redacao(saida, DETECTORES, entidades)
+
+    assert relatorio.aprovado is True
+    assert relatorio.vazamentos == []
+
+
+def test_cpf_mascarado_nao_esconde_vazamento_de_cpf_real_ao_lado(
+    gerador: ModuleType, tmp_path: Path
+) -> None:
+    """A exclusao de CPF_MASCARADO e estreita: nao vira uma desculpa geral —
+
+    um CPF de verdade que vazasse na mesma verificacao continua sendo pego.
+    """
+    entrada = gerador.gerar_pdf_paginas(
+        tmp_path / "duas.pdf",
+        [["CPF: ***.982.247-**"], ["CPF nº 111.444.777-35"]],
+    )
+    entidades = _entidades_por_pagina(entrada)
+    saida = tmp_path / "redigido.pdf"
+    redigir_pdf(entrada, saida, entidades)
+
+    # Sabotagem: reinsere na pagina 1 o CPF real que a redacao removeu.
+    adulterado = tmp_path / "adulterado.pdf"
+    documento = pymupdf.open(saida)
+    documento[1].insert_text(
+        (72, 500), "CPF nº 111.444.777-35", fontname="helv", fontsize=11
+    )
+    documento.save(adulterado)
+    documento.close()
+
+    relatorio = verificar_redacao(adulterado, DETECTORES, entidades)
+
+    assert relatorio.aprovado is False
+    (vazamento,) = relatorio.vazamentos
+    assert vazamento.entity is not None
+    assert vazamento.entity.type is EntityType.CPF
+    assert vazamento.pagina == 1
+
+
 # --------------------------------------------------------------------------- #
 # metadados (/Info do trailer, /Info do catalogo, XMP)
 # --------------------------------------------------------------------------- #

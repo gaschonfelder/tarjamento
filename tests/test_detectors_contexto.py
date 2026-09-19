@@ -286,6 +286,14 @@ def test_cpf_inteiro_nao_e_cpf_mascarado() -> None:
     assert detector_cpf_mascarado.detect("CPF: 529.982.247-25") == []
 
 
+@pytest.mark.parametrize("valor", ["529.XXX.XXX-25", "***.982.247-**"])
+def test_cpf_mascarado_sempre_requer_revisao(valor: str) -> None:
+    """redator.redacao nunca tarja isto automaticamente — sem o sinal, o
+    revisor nao saberia que precisa decidir manualmente."""
+    (achada,) = detector_cpf_mascarado.detect(f"CPF: {valor}")
+    assert achada.requires_review is True
+
+
 # --------------------------------------------------------------------------- #
 # Âncora negativa também suprime aqui
 # --------------------------------------------------------------------------- #

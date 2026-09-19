@@ -43,13 +43,27 @@ export interface Tarja {
 
 /**
  * Como a tarja é pintada. A ordem das regras é a da especificação:
- * `requires_review` ganha de tudo, independente da confiança.
+ * CPF_MASCARADO tem sinal próprio (é sempre `requiresReview`, mas por um
+ * motivo bem mais específico que os outros — ver `aparenciaDe`), depois
+ * `requires_review` ganha de tudo mais, independente da confiança.
  */
-export type Aparencia = 'padrao' | 'sem_contexto' | 'revisao' | 'manual';
+export type Aparencia = 'padrao' | 'sem_contexto' | 'revisao' | 'manual' | 'mascarado';
 
 export const CONFIANCA_ALTA = 0.9;
 
+/** O tipo sintético que a API usa para um CPF já mascarado no original. */
+const TIPO_CPF_MASCARADO = 'CPF_MASCARADO';
+
 export function aparenciaDe(tarja: Tarja): Aparencia {
+  if (tarja.type === TIPO_CPF_MASCARADO) {
+    // Checado ANTES de requiresReview: toda tarja deste tipo já chega
+    // marcada para revisão (ver redator.detectors.contato), mas o motivo é
+    // específico — o valor já veio parcialmente oculto no documento — e
+    // merece um sinal diferente do "revisão" genérico (tipo frágil, baixa
+    // confiança etc.), não o mesmo amarelo por trás do qual essa distinção
+    // se perderia.
+    return 'mascarado';
+  }
   if (tarja.requiresReview) return 'revisao';
   if (tarja.origem === 'manual') return 'manual';
   if (tarja.confidence !== null && tarja.confidence >= CONFIANCA_ALTA && tarja.context === null) {

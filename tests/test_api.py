@@ -24,6 +24,7 @@ import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import fakeredis
@@ -248,6 +249,31 @@ def test_bboxes_caem_dentro_da_pagina(
             for x0, y0, x1, y1 in entidade["bboxes"]:
                 assert 0 <= x0 < x1 <= pagina["largura"]
                 assert 0 <= y0 < y1 <= pagina["altura"]
+
+
+def test_cpf_nativo_tem_5_bboxes_no_padrao_dou(
+    cliente: TestClient, pdf_documentos: Path
+) -> None:
+    """A previa que a interface mostra ja e o padrao DOU: 5 caixas, nao 1 —
+
+    o que o revisor ve e exatamente o que redigir_pdf desenha no final.
+    """
+    job_id = enviar(cliente, pdf_documentos).json()["id"]
+    achadas = entidades(cliente.get(f"/documentos/{job_id}").json())
+
+    (cpf,) = [e for e in achadas if e["type"] == "CPF"]
+    assert len(cpf["bboxes"]) == 5
+
+
+def test_cpf_mascarado_requer_revisao_na_api(
+    cliente: TestClient, gerador: ModuleType, tmp_path: Path
+) -> None:
+    caminho = gerador.gerar_pdf(tmp_path / "mascarado.pdf", ["CPF: ***.982.247-**"])
+    job_id = enviar(cliente, caminho).json()["id"]
+    achadas = entidades(cliente.get(f"/documentos/{job_id}").json())
+
+    (mascarado,) = [e for e in achadas if e["type"] == "CPF_MASCARADO"]
+    assert mascarado["requires_review"] is True
 
 
 def test_pagina_sem_entidade_aparece_mesmo_assim(

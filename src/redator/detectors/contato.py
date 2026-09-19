@@ -7,6 +7,7 @@ a forma do valor, e a âncora, quando existe, eleva a confiança.
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from ..anchors import buscar_ancora, contexto_de_endereco, tem_ancora_negativa
 from ..entities import Entity, EntityType
@@ -190,9 +191,21 @@ class _DetectorCep(_DetectorPadrao):
 
 
 class _DetectorCpfMascarado(_DetectorPadrao):
+    """CPF que já chegou mascarado no documento original.
+
+    Toda ocorrência sai com ``requires_review=True``, sem exceção: a redação
+    (``redator.redacao``) não aplica tarja automática sobre um valor já
+    parcialmente oculto — o padrão DOU não tem como ser reforçado de forma
+    consistente sobre um texto que já veio com pontas ou meio faltando. Quem
+    revisa decide se aceita como está ou marca uma tarja manual por cima.
+    """
+
     def _aceita(self, match: re.Match[str]) -> bool:
         # Sem nenhum grupo oculto e um CPF comum, que tem detector proprio.
         return bool(_TEM_MASCARA.search(match.group()))
+
+    def detect(self, texto: str) -> list[Entity]:
+        return [replace(entidade, requires_review=True) for entidade in super().detect(texto)]
 
 
 class _DetectorEmailOcrAmbiguo:

@@ -16,8 +16,8 @@ import pymupdf
 import pytest
 
 from redator.detectors import TODOS_DETECTORES
-from redator.entities import EntityType
-from redator.pdf import bboxes_for_span, extract_pdf, process_pdf
+from redator.entities import Entity, EntityType
+from redator.pdf import bboxes_for_entity, bboxes_for_span, extract_pdf, process_pdf
 from redator.perfil import EntidadeComAcao, aplicar_perfil
 from redator.pipeline import detect_all
 from redator.redacao import RelatorioRedacao, redigir_pdf
@@ -34,6 +34,16 @@ def _entidades_por_pagina(caminho: Path) -> dict[int, list[EntidadeComAcao]]:
 
 def _sha256(caminho: Path) -> str:
     return hashlib.sha256(caminho.read_bytes()).hexdigest()
+
+
+def _pdf_com_cpf(caminho: Path) -> Path:
+    """Um PDF minimo com um CPF, para ter ao menos uma entidade TARJAR."""
+    documento = pymupdf.open()
+    pagina = documento.new_page()
+    pagina.insert_text((72, 100), "CPF nº 529.982.247-25", fontname="helv", fontsize=11)
+    documento.save(caminho)
+    documento.close()
+    return caminho
 
 
 # --------------------------------------------------------------------------- #
@@ -60,6 +70,128 @@ def test_cnpj_publicado_continua_no_texto_extraido(
 
     texto_saida = extract_pdf(tmp_path / "redigido.pdf").pages[0].text
     assert "46.634.044/0001-74" in texto_saida
+
+
+# --------------------------------------------------------------------------- #
+# tarja parcial de CPF (padrao DOU) — so em origem nativa
+# --------------------------------------------------------------------------- #
+
+
+def _cpf_e_entidades(caminho: Path) -> tuple[Entity, dict[int, list[EntidadeComAcao]]]:
+    pagina = extract_pdf(caminho).pages[0]
+    (cpf,) = [e for e in detect_all(pagina.text, DETECTORES) if e.type is EntityType.CPF]
+    return cpf, _entidades_por_pagina(caminho)
+
+
+def test_cpf_nativo_mantem_os_6_digitos_do_meio_e_a_pontuacao(tmp_path: Path) -> None:
+    caminho = _pdf_com_cpf(tmp_path / "cpf.pdf")
+
+    redigir_pdf(caminho, tmp_path / "redigido.pdf", _entidades_por_pagina(caminho))
+
+    texto_saida = extract_pdf(tmp_path / "redigido.pdf").pages[0].text
+    assert ".982.247-" in texto_saida
+
+
+def test_cpf_nativo_remove_as_pontas(tmp_path: Path) -> None:
+    caminho = _pdf_com_cpf(tmp_path / "cpf.pdf")
+
+    redigir_pdf(caminho, tmp_path / "redigido.pdf", _entidades_por_pagina(caminho))
+
+    texto_saida = extract_pdf(tmp_path / "redigido.pdf").pages[0].text
+    assert "529" not in texto_saida
+    assert "-25" not in texto_saida
+
+
+def test_cpf_nativo_nao_reconstroi_por_justaposicao(tmp_path: Path) -> None:
+    """Nem juntando todo digito que sobrou na pagina da para montar de volta
+
+    os 11 originais — 5 foram removidos do CONTEUDO, nao so escondidos
+    visualmente. Se a redacao coisesse algo errado (ex.: so cobrisse com
+    preto sem apagar o texto), os digitos ainda estariam todos ali, na
+    ordem certa, e este teste pegaria isso.
+    """
+    caminho = _pdf_com_cpf(tmp_path / "cpf.pdf")
+
+    redigir_pdf(caminho, tmp_path / "redigido.pdf", _entidades_por_pagina(caminho))
+
+    texto_saida = extract_pdf(tmp_path / "redigido.pdf").pages[0].text
+    digitos_restantes = "".join(c for c in texto_saida if c.isdigit())
+    assert "52998224725" not in digitos_restantes
+
+
+def test_cpf_nativo_gera_5_redact_annots_nao_1(tmp_path: Path) -> None:
+    """Prova estrutural: uma caixa por digito oculto, nao uma cobrindo tudo."""
+    caminho = _pdf_com_cpf(tmp_path / "cpf.pdf")
+    cpf, _ = _cpf_e_entidades(caminho)
+    pagina = extract_pdf(caminho).pages[0]
+
+    assert len(bboxes_for_entity(pagina, cpf)) == 5
+
+
+def test_relatorio_conta_cpf_parcial_normalmente_como_tarjada(tmp_path: Path) -> None:
+    caminho = _pdf_com_cpf(tmp_path / "cpf.pdf")
+
+    relatorio = redigir_pdf(
+        caminho, tmp_path / "redigido.pdf", _entidades_por_pagina(caminho)
+    )
+
+    assert relatorio.total_entidades_tarjadas == 1
+    assert relatorio.verificacao.aprovado is True
+
+
+def test_cpf_parcial_aprovado_na_verificacao_pos_redacao(tmp_path: Path) -> None:
+    """O que sobra (6 digitos soltos + pontuacao) nao fecha DV de CPF novo,
+
+    entao a re-deteccao na verificacao nao acha nada ali — ausencia de match
+    e sucesso, nao "nao achei o CPF original, deve ter sumido, ok" por
+    engano: aqui o CPF original de verdade sumiu, de proposito.
+    """
+    caminho = _pdf_com_cpf(tmp_path / "cpf.pdf")
+    entidades = _entidades_por_pagina(caminho)
+
+    relatorio = redigir_pdf(caminho, tmp_path / "redigido.pdf", entidades)
+
+    assert relatorio.verificacao.aprovado is True
+    assert relatorio.verificacao.vazamentos == []
+
+
+# --------------------------------------------------------------------------- #
+# CPF_MASCARADO: nunca recebe redacao automatica
+# --------------------------------------------------------------------------- #
+
+
+def test_cpf_mascarado_nao_e_tocado(gerador: ModuleType, tmp_path: Path) -> None:
+    caminho = gerador.gerar_pdf(tmp_path / "mascarado.pdf", ["CPF: ***.982.247-**"])
+    entidades = _entidades_por_pagina(caminho)
+    (item,) = entidades[0]
+    assert item.entity.type is EntityType.CPF_MASCARADO
+    assert item.acao.value == "tarjar"  # PERFIL_PADRAO nao muda
+
+    saida = tmp_path / "redigido.pdf"
+    relatorio = redigir_pdf(caminho, saida, entidades)
+
+    assert relatorio.total_entidades_tarjadas == 0
+    assert relatorio.total_entidades_publicadas == 0
+    assert relatorio.total_cpf_mascarado_sinalizados == 1
+    assert "982.247" in extract_pdf(saida).pages[0].text
+
+
+def test_cpf_mascarado_intocado_e_aprovado_na_verificacao(
+    gerador: ModuleType, tmp_path: Path
+) -> None:
+    """redator.redacao nunca desenha nada sobre CPF_MASCARADO — a verificacao
+
+    tem de concordar que isso e sucesso, nao vazamento (ver docstring de
+    ambos os modulos: cobrar a ausencia de algo que nunca deveria sumir
+    reprovaria todo documento com um CPF ja mascarado).
+    """
+    caminho = gerador.gerar_pdf(tmp_path / "mascarado.pdf", ["CPF: ***.982.247-**"])
+    entidades = _entidades_por_pagina(caminho)
+
+    relatorio = redigir_pdf(caminho, tmp_path / "redigido.pdf", entidades)
+
+    assert relatorio.verificacao.aprovado is True
+    assert relatorio.verificacao.vazamentos == []
 
 
 # --------------------------------------------------------------------------- #
@@ -234,6 +366,10 @@ def test_imagem_de_fundo_so_perde_os_pixels_sob_a_entidade(tmp_path: Path) -> No
     PIXELS``: apaga so os pixels sob a area marcada, nao a imagem inteira.
     E o comportamento certo para um carimbo/texto pequeno sobre uma imagem
     grande — ``PDF_REDACT_IMAGE_REMOVE`` faria a pagina toda desaparecer.
+
+    Amostra o pixel dentro da PRIMEIRA caixa parcial (um dos 3 primeiros
+    digitos, ocultos no padrao DOU) — nao o centro do span inteiro do CPF,
+    que agora cai bem no meio visivel (preservado) e ficaria branco.
     """
     caminho = tmp_path / "imagem.pdf"
     imagem_branca = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 400, 400), False)
@@ -246,7 +382,10 @@ def test_imagem_de_fundo_so_perde_os_pixels_sob_a_entidade(tmp_path: Path) -> No
     documento.save(caminho)
     documento.close()
 
-    entidade_com_acao, bbox = _cpf_e_bbox(caminho)
+    pagina_extraida = extract_pdf(caminho).pages[0]
+    (cpf,) = [e for e in detect_all(pagina_extraida.text, DETECTORES) if e.type is EntityType.CPF]
+    (entidade_com_acao,) = aplicar_perfil([cpf])
+    x0, y0, x1, y1 = bboxes_for_entity(pagina_extraida, cpf)[0]
 
     saida = tmp_path / "redigido.pdf"
     redigir_pdf(caminho, saida, {0: [entidade_com_acao]})
@@ -256,8 +395,7 @@ def test_imagem_de_fundo_so_perde_os_pixels_sob_a_entidade(tmp_path: Path) -> No
         pagina_saida = documento_saida[0]
         assert len(pagina_saida.get_images()) == 1, "a imagem inteira nao pode sumir"
         pix = pagina_saida.get_pixmap()
-        # dentro da area do CPF: preenchido de preto pela redacao.
-        x0, y0, x1, y1 = bbox
+        # dentro da caixa do digito oculto: preenchido de preto pela redacao.
         assert pix.pixel(int((x0 + x1) / 2), int((y0 + y1) / 2)) == (0, 0, 0)
         # bem longe da entidade, na mesma imagem: continua branco.
         assert pix.pixel(380, 380) == (255, 255, 255)
@@ -317,18 +455,10 @@ def test_link_colidindo_com_a_redacao_nao_sobrevive(tmp_path: Path) -> None:
 # Cada teste monta um PDF a mao com pymupdf (o gerador de fixtures nao cobre
 # metadado/AcroForm/anexo), roda redigir_pdf com uma unica entidade TARJAR
 # qualquer (a limpeza de documento nao depende de haver entidade nenhuma),
-# e confirma no arquivo de SAIDA, nao so no relatorio.
+# e confirma no arquivo de SAIDA, nao so no relatorio. ``_pdf_com_cpf`` esta
+# definida no topo do arquivo — reaproveitada tambem pelos testes de tarja
+# parcial, logo depois do bloco introdutorio.
 # --------------------------------------------------------------------------- #
-
-
-def _pdf_com_cpf(caminho: Path) -> Path:
-    """Um PDF minimo com um CPF, para ter ao menos uma entidade TARJAR."""
-    documento = pymupdf.open()
-    pagina = documento.new_page()
-    pagina.insert_text((72, 100), "CPF nº 529.982.247-25", fontname="helv", fontsize=11)
-    documento.save(caminho)
-    documento.close()
-    return caminho
 
 
 def test_nada_extra_para_remover_relatorio_fica_todo_falso_ou_zero(

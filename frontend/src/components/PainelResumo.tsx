@@ -26,6 +26,7 @@ const ROTULOS: Record<ReturnType<typeof aparenciaDe>, string> = {
   sem_contexto: 'Validada, mas sem âncora textual próxima',
   revisao: 'Sinalizada para revisão',
   manual: 'Marcada à mão',
+  mascarado: 'Já mascarado no original — confirme manualmente',
 };
 
 export default function PainelResumo({
@@ -102,7 +103,7 @@ export default function PainelResumo({
 
       <h3 className="painel__subtitulo">Legenda</h3>
       <ul className="painel__legenda">
-        {(['padrao', 'sem_contexto', 'revisao', 'manual'] as const).map((a) => (
+        {(['padrao', 'sem_contexto', 'revisao', 'manual', 'mascarado'] as const).map((a) => (
           <li key={a}>
             <span className={`amostra amostra--${a}`} />
             {ROTULOS[a]}

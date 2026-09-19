@@ -763,3 +763,89 @@ endpoint devolve 500 em vez de servir um PDF com dado pessoal ainda
 presente. Falha de forma segura; não foi verificado com um PDF escaneado
 real neste ciclo, por falta de caso de uso — fica registrado, não silencioso,
 igual ao tratamento dado a OCG.
+
+## Fase 6 — Tarja parcial de CPF (padrão DOU)
+
+Um CPF (só o tipo `CPF`, não `CPF_MASCARADO`) passa a receber, por padrão,
+tarja parcial — os 3 primeiros e os 2 últimos dígitos ocultos, os 6 do meio
+e a pontuação preservados como texto extraível — em vez da tarja total que
+todo `TARJAR` recebia até aqui. Todo outro tipo continua com tarja total,
+sem mudança.
+
+### 1. Uma função só, usada na prévia e na redação real
+
+A geometria mora em `redator.pdf.pipeline.bboxes_for_entity`: para CPF em
+origem nativa, uma caixa por dígito das pontas (`redator.masking
+.cpf_char_indices_to_hide`, que compartilha com `mask_cpf` a mesma constante
+de "quais dígitos ficam ocultos" — a regra existe uma vez só); para todo
+resto, o span inteiro via `bboxes_for_span`, como antes. A mesma função
+alimenta `redator.api.jobs._converter` (a prévia que a interface mostra) e
+`redator.redacao.redigir_pdf` (a redação real): o revisor vê exatamente o
+que vai sair no arquivo final, sem as duas metades poderem divergir por
+estarem implementadas duas vezes.
+
+### 2. OCR: limite estrutural, não lacuna esquecida
+
+`bboxes_for_entity` só aplica o padrão parcial quando
+`PageExtraction.origem_ocr` é `False`. Em origem OCR a granularidade de
+`extract_pdf_scanned` é por PALAVRA — toda `CharBox` de um CPF reconhecido
+carrega a mesma caixa, a da palavra inteira —, e não há como isolar 5 de 11
+dígitos dentro dela. O CPF cai no mesmo caminho de qualquer outro tipo
+(span inteiro) nesse caso. Testado diretamente em `bboxes_for_entity` com
+uma `PageExtraction` montada à mão reproduzindo essa granularidade — não há
+como exercitar isso através de `redigir_pdf`, porque esse módulo sempre
+extrai a entrada com `extract_pdf` nativo (ver Fase 5, item 5); uma entidade
+de origem OCR nunca chega a `redigir_pdf` com offsets que batam.
+
+### 3. `CPF_MASCARADO`: excluído do mecanismo, não do perfil
+
+Cogitado e descartado: mudar `PERFIL_PADRAO[CPF_MASCARADO]` de `TARJAR`
+para `PUBLICAR`. Rejeitado porque já existia um teste (`test_perfil.py
+::test_cpf_mascarado_e_tarjado`) documentando a decisão jurídica oposta —
+"o que sobra de um CPF mascarado ainda identifica, junto com o nome" — e
+`test_so_tres_tipos_sao_publicados` trata qualquer novo tipo em PUBLICAR
+como algo que "tem que aparecer" ali, de propósito, para uma mudança dessas
+nunca ser silenciosa. `CPF_MASCARADO` continua, corretamente, `TARJAR`: o
+dado É sensível. O que muda é só o MECANISMO — `redigir_pdf` nunca desenha
+nada sobre ele, mesmo com `acao == TARJAR`, porque não há como reforçar o
+padrão DOU sobre um valor que já chegou com pontas ou meio faltando, sem
+saber ao certo o que é dígito original e o que já é máscara. Fica contado à
+parte (`RelatorioRedacao.total_cpf_mascarado_sinalizados`) — nem tarjado nem
+publicado, porque nenhuma das duas contagens descreveria o que aconteceu.
+
+Sinalização: `_DetectorCpfMascarado.detect` (``redator.detectors.contato``)
+força `requires_review=True` em toda ocorrência, sem exceção — mesma técnica
+já usada por `_DetectorCep` e `_DetectorEmailOcrAmbiguo` no mesmo módulo. Na
+interface, `aparenciaDe` (`state/revisao.ts`) checa o tipo `CPF_MASCARADO`
+ANTES de `requiresReview`: sem isso, toda ocorrência cairia no amarelo
+genérico de "revisão", indistinguível de um CEP de baixa confiança ou um
+tipo frágil de OCR — o revisor perderia justamente o motivo específico
+("isto já veio mascarado, o mecanismo automático não mexeu"). Cor nova
+(roxo, `--tarja-mascarado`), para não colidir com o azul já usado por tarja
+manual nem com o âmbar de revisão genérica.
+
+### 4. A verificação precisou de uma exceção, e só essa
+
+`CPF_MASCARADO` com `acao == TARJAR` sobrevive intocado por contrato — e
+`verificar_redacao` reabre o resultado e re-detecta do zero, então SEMPRE
+encontraria essa mesma entidade de novo. Sem uma exceção explícita, todo
+documento com um CPF mascarado sairia reprovado (500 no endpoint de
+exportação), mesmo funcionando exatamente como projetado. `_verificar_texto`
+exclui `CPF_MASCARADO` do conjunto `proibidas` que constrói — a mesma lista
+contra a qual toda entidade re-detectada é comparada. A exclusão é estreita:
+só afeta a chave `(CPF_MASCARADO, texto)`; um CPF de verdade (`CPF`) que
+vazasse do lado continua sendo pego normalmente, e há teste provando isso
+(`test_cpf_mascarado_nao_esconde_vazamento_de_cpf_real_ao_lado`) — a mesma
+verificação, no mesmo documento, reprova o CPF real e aprova o mascarado ao
+lado. Testado por sabotagem (removendo a exclusão e confirmando que o teste
+positivo quebra): sem o filtro, `test_cpf_mascarado_intocado_nao_e_vazamento`
+falha com `aprovado=False`, confirmando que o teste não é vácuo.
+
+O outro lado — a tarja PARCIAL de um CPF comum não causar falso vazamento —
+não precisou de nenhuma mudança em `verificar_redacao`. O que sobra depois
+de remover 5 de 11 dígitos (6 soltos + pontuação) não fecha a chave
+`(CPF, texto_original_de_11_dígitos)` que `proibidas` guarda — e nenhum
+detector reconhece um trecho de 6 dígitos soltos como CPF ou CPF_MASCARADO
+novo, então a re-detecção nem chega a produzir uma entidade ali. Ausência de
+candidato é ausência de correspondência, e ausência de correspondência já
+era, antes desta fase, o critério correto de sucesso.

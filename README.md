@@ -124,6 +124,31 @@ O que se perde com isso, e só vale no Windows: sem processo filho, o
 que trave prende o worker. Em produção Linux vale o `Worker` normal, e aí o
 comando é o do topo de `src/redator/api/jobs.py`, sem `--worker-class`.
 
+**Pegadinha: o `redator` no final do comando não é decorativo.** `FILA_PADRAO`
+(`src/redator/api/config.py`) é `"redator"` — é para lá que a API enfileira
+(`criar_fila`, em `jobs.py`). O `rq worker` só escuta a fila que você passar
+como argumento posicional; sem ela, ele cai no default do próprio RQ, que é
+`default`, **sem erro nenhum**. O sintoma é exatamente o descrito no topo
+desta seção: `POST /documentos` devolve 202, o worker parece de pé no log, e
+o `GET` nunca sai de `recebido`/`processando` — o job fica empilhado para
+sempre na fila `redator`, que ninguém está ouvindo. `--url` sozinho não
+resolve: host e banco batem com o default do RQ mesmo sem ele, só a fila
+diverge.
+
+Para confirmar, com o Redis do WSL de pé:
+
+```powershell
+wsl -d Ubuntu -- redis-cli -n 0 LLEN rq:queue:redator   # jobs presos aqui = o worker errado
+wsl -d Ubuntu -- redis-cli -n 0 LLEN rq:queue:default   # e provavelmente 0 aqui
+```
+
+E, se já tiver algum worker de pé, o que ele está de fato ouvindo:
+
+```powershell
+wsl -d Ubuntu -- redis-cli -n 0 keys "rq:worker:*"
+wsl -d Ubuntu -- redis-cli -n 0 hget rq:worker:<id-do-worker-acima> queues
+```
+
 O `--with-scheduler` é o que dispara a expiração agendada no vencimento do
 TTL. Sem ele a API continua correta — `Armazenamento.obter` destrói o que
 venceu antes de responder —, mas um job que ninguém mais leia fica no disco

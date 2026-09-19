@@ -13,7 +13,8 @@ from pathlib import Path
 import pymupdf
 
 from ..detectors import Detector
-from ..entities import Entity
+from ..entities import Entity, EntityType
+from ..masking import cpf_char_indices_to_hide
 from ..pipeline import detect_all
 from .extract import (
     BBox,
@@ -23,7 +24,7 @@ from .extract import (
     extract_pdf,
 )
 
-__all__ = ["Extrator", "gerar_pdf_debug", "process_pdf"]
+__all__ = ["Extrator", "bboxes_for_entity", "gerar_pdf_debug", "process_pdf"]
 
 #: Qualquer função que leve um caminho de PDF a uma ``DocumentExtraction``.
 #: ``extract_pdf`` (camada de texto nativa) e ``extract_pdf_scanned`` (OCR)
@@ -69,6 +70,33 @@ def process_pdf(
         pagina.page: detect_all(pagina.text, detectores, origem_ocr=pagina.origem_ocr)
         for pagina in documento.pages
     }
+
+
+def bboxes_for_entity(pagina: PageExtraction, entidade: Entity) -> list[BBox]:
+    """As caixas que representam ``entidade`` na página — a geometria de exibição.
+
+    Para todo tipo, é ``bboxes_for_span`` sobre o span inteiro: uma caixa por
+    linha visual. A exceção é CPF em texto de origem NATIVA (não OCR): aí é
+    uma caixa por DÍGITO a ocultar — os 3 primeiros e os 2 últimos, mesma
+    regra de :func:`redator.masking.mask_cpf` —, deixando os 6 do meio e a
+    pontuação fora de qualquer caixa. CPF_MASCARADO usa o caminho padrão (span
+    inteiro): ele já é só formatação por cima de um valor que não está mais
+    todo visível, e não há padrão DOU novo para recortar dali.
+
+    Esta função só decide ONDE desenhar. Usada tanto para a prévia que a
+    interface de revisão mostra (``redator.api.jobs``) quanto para a redação
+    real (``redator.redacao``) — as duas enxergam a mesma geometria, então o
+    que o revisor vê é exatamente o que sai no PDF final.
+
+    Por que CPF de OCR cai no span inteiro: a granularidade de
+    ``extract_pdf_scanned`` é por PALAVRA, não por caractere — uma única
+    ``CharBox`` cobre o CPF inteiro, e não há como recortar 5 de 11 dígitos
+    dentro dela. ``pagina.origem_ocr`` é o sinal que distingue os dois casos.
+    """
+    if entidade.type is EntityType.CPF and not pagina.origem_ocr:
+        indices = cpf_char_indices_to_hide(entidade.text)
+        return [pagina.char_boxes[entidade.start + i].bbox for i in indices]
+    return bboxes_for_span(pagina, entidade.start, entidade.end)
 
 
 def _rotulo(entidade: Entity) -> str:

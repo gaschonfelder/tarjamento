@@ -13,7 +13,7 @@ from redator.entities import (
     EntityType,
     LegalCategory,
 )
-from redator.masking import mask_cpf
+from redator.masking import cpf_char_indices_to_hide, mask_cpf
 
 
 def make_entity(
@@ -282,3 +282,51 @@ def test_mask_cpf(entrada: str, esperado: str) -> None:
 def test_mask_cpf_rejeita_tamanho_errado(entrada: str) -> None:
     with pytest.raises(ValueError):
         mask_cpf(entrada)
+
+
+# --------------------------------------------------------------------------- #
+# cpf_char_indices_to_hide
+# --------------------------------------------------------------------------- #
+
+
+def test_cpf_char_indices_to_hide_com_pontuacao() -> None:
+    # "529.982.247-25": indices 0,1,2,3,4,5,6,7,8,9,10,11,12,13
+    #                    5  2  9  .  9  8  2  .  2  4  7  -  2  5
+    # digitos ficam em  0  1  2     4  5  6     8  9 10    12 13
+    # ocultos: os 3 primeiros (0,1,2) e os 2 ultimos (12,13) dos digitos
+    assert cpf_char_indices_to_hide("529.982.247-25") == [0, 1, 2, 12, 13]
+
+
+def test_cpf_char_indices_to_hide_sem_pontuacao() -> None:
+    # 11 digitos corridos: ocultos sao as 3 primeiras e as 2 ultimas posicoes
+    assert cpf_char_indices_to_hide("52998224725") == [0, 1, 2, 9, 10]
+
+
+def test_cpf_char_indices_to_hide_indices_ocultos_sao_todos_digitos() -> None:
+    """Nunca aponta para pontuacao — so ha o que ocultar, nunca o que pular."""
+    texto = "529.982.247-25"
+    for indice in cpf_char_indices_to_hide(texto):
+        assert texto[indice].isdigit()
+
+
+def test_cpf_char_indices_to_hide_visiveis_sao_o_meio() -> None:
+    """O complemento dos indices ocultos e exatamente os 6 digitos do meio e a pontuacao."""
+    texto = "529.982.247-25"
+    ocultos = set(cpf_char_indices_to_hide(texto))
+    visiveis = "".join(c for i, c in enumerate(texto) if i not in ocultos)
+    assert visiveis == ".982.247-"
+
+
+def test_cpf_char_indices_to_hide_rejeita_tamanho_errado() -> None:
+    with pytest.raises(ValueError):
+        cpf_char_indices_to_hide("123.456.789-0")
+
+
+def test_cpf_char_indices_to_hide_mesma_regra_de_mask_cpf() -> None:
+    """As duas funcoes tem que concordar: os digitos ocultos aqui sao os
+    digitos que mask_cpf substitui por asterisco."""
+    texto = "529.982.247-25"
+    ocultos = set(cpf_char_indices_to_hide(texto))
+    digitos_ocultos = "".join(c for i, c in enumerate(texto) if i in ocultos and c.isdigit())
+    assert digitos_ocultos == "52925"
+    assert mask_cpf(texto) == "***.982.247-**"
