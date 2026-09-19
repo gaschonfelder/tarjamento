@@ -683,3 +683,83 @@ mais o filtro de PUBLICAR, a regex de JS e a checagem de `FileAttachment`,
 foi anulado um de cada vez no código da verificação: todas as nove sabotagens
 quebraram ao menos um teste. Os dois PDFs manuais da ata (`pdf_manual/`) saem
 aprovados, com 17 entidades tarjadas cada.
+
+## Fase 5 — Exportação
+
+`POST /documentos/{job_id}/exportar` fecha o ciclo: detecção → revisão
+humana → `redigir_pdf` (Fase 4) → download. Recebe a decisão final
+(`TARJAR`/`PUBLICAR`) de cada entidade, redige de verdade e devolve o PDF —
+ou 500, se a verificação pós-redação reprovar.
+
+### 1. O servidor nunca persistiu um `Entity` — e não passou a persistir
+
+`EntidadeResponse` (o que a interface recebe) não carrega `start`/`end`: são
+offsets de um texto extraído que também nunca é gravado (ver Fase 3,
+"Armazenamento"). Sem eles não dá para montar o `EntidadeComAcao` que
+`redigir_pdf` espera.
+
+A alternativa óbvia — guardar o `Entity` inteiro em `resultado.json` — foi
+descartada: persistir offsets de texto ao lado do PDF é mais superfície para
+o mesmo dado pessoal ficar em repouso, exatamente o que a Fase 3 evitou ao
+não gravar o texto extraído.
+
+Em vez disso, o endpoint reprocessa `original.pdf` do zero — mesmo
+`extrair` (roteamento nativo/OCR), mesmos `TODOS_DETECTORES` — e zipa o
+resultado fresco com os `EntidadeResponse` armazenados, posição a posição.
+Determinístico sobre um arquivo imutável, isso recupera o `Entity` de cada
+id sem o servidor ter guardado um único. A premissa (mesmo tamanho, mesmo
+tipo por posição) é validada antes de usar: uma divergência vira `RuntimeError`
+(500), nunca um mapeamento silenciosamente errado — errar por excesso de
+cautela aqui é a única opção aceitável, dado o que está em jogo.
+
+### 2. Tarja manual: bbox direto, sem span de texto
+
+Uma tarja desenhada à mão na interface não tem detector por trás — o
+servidor nunca viu essa área, e não há offset de texto para pedir a
+`bboxes_for_span`. `redigir_pdf` ganhou um parâmetro novo,
+`redacoes_manuais_por_pagina: dict[int, list[BBox]]`, aplicado no MESMO laço
+por página e no MESMO `apply_redactions()` das entidades reais — não um
+segundo passo sobre o arquivo já salvo. Importa para a verificação: ela roda
+uma vez, no final, sobre o estado verdadeiramente final da página, não sobre
+um resultado intermediário que um passo manual subsequente poderia
+corrigir ou vazar.
+
+O contrato de `POST .../exportar` reflete isso: uma decisão cujo
+`entidade_id` não está no resultado original só é aceita com `bboxes`
+— é a única informação que torna aquela área legítima para o servidor.
+Sem `bboxes`, 400 (não há área para redigir), nunca um default.
+
+### 3. Falta de decisão nunca vira default
+
+Toda entidade do resultado original precisa de uma decisão explícita no
+corpo da requisição. A omissão vira 400 com a lista de quais — nunca
+`PUBLICAR` por default (esconderia decisão jamais tomada) nem `TARJAR` por
+default (poderia apagar algo que o revisor queria manter, silenciosamente).
+Omissão pode significar "esqueceu de revisar"; não é seguro adivinhar qual.
+
+### 4. Aprovar é servir; reprovar não apaga nem destrói
+
+`RelatorioRedacao.verificacao.aprovado == False` vira 500 com o vazamento,
+e o arquivo redigido continua no disco, e o job continua vivo — permite
+nova tentativa ou inspeção. Só uma exportação APROVADA aciona a destruição
+do job, via `BackgroundTask` anexado ao `FileResponse`: roda depois de os
+bytes serem enviados, então "servido com sucesso" e "destruído" ficam na
+ordem certa. Consequência deliberada: o endpoint só funciona uma vez por
+job — uma segunda chamada encontra 404, como qualquer job que não existe
+mais.
+
+### 5. Limitação herdada, não nova: `redigir_pdf` e OCR
+
+`redigir_pdf` sempre extrai a entrada com `extract_pdf` (nativo), nunca com
+OCR, independente de como as entidades foram originalmente detectadas. Um
+job cujo documento só tem texto via OCR (ver Fase 2.5) teria offsets que não
+batem com essa extração nativa — bboxes vazias, nada marcado para redação.
+Não é uma lacuna nova desta fase: já existia em `redigir_pdf`. Mas o
+endpoint de exportação é o primeiro chamador que pode receber, na prática,
+um job desses. A rede de segurança já existe e não precisou de código novo:
+a entidade que "deveria" ter sumido continua detectável no arquivo de
+saída, `verificar_redacao` a encontra de novo, `aprovado` vira `False`, e o
+endpoint devolve 500 em vez de servir um PDF com dado pessoal ainda
+presente. Falha de forma segura; não foi verificado com um PDF escaneado
+real neste ciclo, por falta de caso de uso — fica registrado, não silencioso,
+igual ao tratamento dado a OCG.

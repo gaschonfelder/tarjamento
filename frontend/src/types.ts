@@ -42,3 +42,31 @@ export interface JobResponse {
   paginas: PaginaResponse[] | null;
   expira_em: string;
 }
+
+export type AcaoDecisao = 'TARJAR' | 'PUBLICAR';
+
+/**
+ * A decisão final do revisor para uma tarja, para `POST .../exportar`.
+ *
+ * `bboxes` só vai preenchido para uma tarja MANUAL: o servidor nunca viu essa
+ * área — não existe `entidade_id` dela no resultado original —, então é a
+ * única forma de dizer onde redigir. Para uma tarja vinda da API, o servidor
+ * já sabe onde ela está e `bboxes` fica de fora.
+ */
+export interface DecisaoEntidade {
+  entidade_id: string;
+  pagina: number;
+  acao: AcaoDecisao;
+  bboxes?: BBox[];
+}
+
+export interface ExportarRequest {
+  decisoes: DecisaoEntidade[];
+}
+
+/** As entidades do resultado original que ficaram sem decisão — erro 400. */
+export interface EntidadeFaltando {
+  entidade_id: string;
+  pagina: number;
+  type: string;
+}

@@ -23,7 +23,9 @@ Para subir::
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import (
@@ -37,11 +39,24 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse
 from rq import Queue
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
+from ..detectors import TODOS_DETECTORES
+from ..entities import Entity
+from ..pdf.pipeline import process_pdf
+from ..perfil import AcaoRedacao, EntidadeComAcao
+from ..redacao import BBox, redigir_pdf
 from .config import Config
-from .jobs import criar_fila, enfileirar
-from .schemas import JobResponse
+from .jobs import criar_fila, enfileirar, extrair
+from .schemas import (
+    AcaoDecisao,
+    DecisaoEntidade,
+    ExportarRequest,
+    JobResponse,
+    JobStatus,
+    PaginaResponse,
+)
 from .storage import Armazenamento, ErroLimpeza, novo_job_id
 
 __all__ = ["app", "criar_app", "servir"]
@@ -76,6 +91,149 @@ async def _ler_limitado(arquivo: UploadFile, maximo: int) -> bytes:
             )
         pedacos.append(pedaco)
     return b"".join(pedacos)
+
+
+def _entidades_conhecidas(
+    caminho_pdf: Path, paginas: list[PaginaResponse]
+) -> dict[str, tuple[int, Entity]]:
+    """O ``Entity`` real por trás de cada id do resultado original.
+
+    O servidor nunca persistiu um ``Entity`` — só o ``EntidadeResponse``
+    convertido (Fase 3), sem ``start``/``end``. Para recuperar um span de
+    texto que ``redigir_pdf`` consiga usar, este reprocessa ``caminho_pdf``
+    do zero: mesmo roteamento de extração do job (:func:`extrair`, nativo ou
+    OCR) e os mesmos detectores (``TODOS_DETECTORES``) sobre um arquivo
+    imutável produzem, deterministicamente, a MESMA lista de entidades, na
+    MESMA ordem, que gerou ``resultado.json`` da primeira vez. Zipar essa
+    lista fresca com os ``EntidadeResponse`` armazenados (mesma ordem de
+    origem) devolve o ``Entity`` de cada id sem o servidor ter guardado um
+    único.
+
+    Uma divergência de tamanho ou de tipo entre as duas listas significa que
+    esta premissa quebrou — o PDF do job mudou por fora, ou o reprocessamento
+    não é mais determinístico — e é erro do servidor, não do cliente: nunca
+    é seguro tarjar com base num mapeamento que pode estar errado.
+    """
+    documento = extrair(caminho_pdf)
+    frescas = process_pdf(
+        caminho_pdf, list(TODOS_DETECTORES), extrator=lambda _: documento
+    )
+    conhecidas: dict[str, tuple[int, Entity]] = {}
+    for pagina in paginas:
+        entidades_frescas = frescas.get(pagina.numero, [])
+        if len(entidades_frescas) != len(pagina.entidades):
+            raise RuntimeError(
+                f"reprocessamento da pagina {pagina.numero} do job produziu "
+                f"{len(entidades_frescas)} entidade(s), resultado original "
+                f"tinha {len(pagina.entidades)} — nao e seguro exportar"
+            )
+        for resposta, entidade in zip(pagina.entidades, entidades_frescas, strict=True):
+            if entidade.type.name != resposta.type:
+                raise RuntimeError(
+                    f"reprocessamento da pagina {pagina.numero} do job diverge "
+                    f"do resultado original ({entidade.type.name} != "
+                    f"{resposta.type}) — nao e seguro exportar"
+                )
+            conhecidas[resposta.id] = (pagina.numero, entidade)
+    return conhecidas
+
+
+def _montar_redacao(
+    decisoes: list[DecisaoEntidade],
+    conhecidas: dict[str, tuple[int, Entity]],
+    paginas_validas: set[int],
+) -> tuple[dict[int, list[EntidadeComAcao]], dict[int, list[BBox]]]:
+    """Valida as decisões e monta o que ``redigir_pdf`` precisa.
+
+    Toda entidade de ``conhecidas`` (o resultado original) precisa de uma
+    decisão — a ausência não vira default nenhum, porque omissão pode
+    significar "esqueceu de revisar", não "decidiu publicar" (ver docstring
+    do endpoint). Uma decisão que referencia um id fora de ``conhecidas`` só
+    pode ser uma tarja manual, e só é aceita com ``bboxes``: é a única
+    informação que torna aquela área real para o servidor.
+    """
+    faltando = set(conhecidas) - {d.entidade_id for d in decisoes}
+    if faltando:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "mensagem": (
+                    f"faltam decisoes para {len(faltando)} entidade(s) do "
+                    "resultado original"
+                ),
+                "faltando": [
+                    {
+                        "entidade_id": id_,
+                        "pagina": conhecidas[id_][0],
+                        "type": conhecidas[id_][1].type.name,
+                    }
+                    for id_ in sorted(faltando)
+                ],
+            },
+        )
+
+    entidades_por_pagina: dict[int, list[EntidadeComAcao]] = defaultdict(list)
+    manuais_por_pagina: dict[int, list[BBox]] = defaultdict(list)
+
+    for decisao in decisoes:
+        acao = (
+            AcaoRedacao.TARJAR
+            if decisao.acao is AcaoDecisao.TARJAR
+            else AcaoRedacao.PUBLICAR
+        )
+        conhecida = conhecidas.get(decisao.entidade_id)
+        if conhecida is not None:
+            pagina_real, entidade = conhecida
+            if decisao.pagina != pagina_real:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"decisao para {decisao.entidade_id} informa pagina "
+                        f"{decisao.pagina}, mas a entidade esta na pagina "
+                        f"{pagina_real}"
+                    ),
+                )
+            entidades_por_pagina[pagina_real].append(
+                EntidadeComAcao(entity=entidade, acao=acao)
+            )
+            continue
+
+        if not decisao.bboxes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"entidade {decisao.entidade_id} nao esta no resultado "
+                    "original e nao trouxe bboxes — sem area nao ha o que "
+                    "redigir"
+                ),
+            )
+        if decisao.pagina not in paginas_validas:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"pagina {decisao.pagina} nao existe neste documento",
+            )
+        if acao is AcaoRedacao.TARJAR:
+            manuais_por_pagina[decisao.pagina].extend(decisao.bboxes)
+
+    return dict(entidades_por_pagina), dict(manuais_por_pagina)
+
+
+def _destruir_apos_exportar(armazenamento: Armazenamento, job_id: str) -> None:
+    """Roda DEPOIS de o PDF exportado ser servido — fecha a não-retenção.
+
+    Mesma lógica de ``descartar`` (o DELETE explícito), só que sem cliente
+    HTTP esperando resposta: uma falha de limpeza vira log crítico, nunca
+    some em silêncio.
+    """
+    try:
+        armazenamento.remover(job_id)
+    except ErroLimpeza:
+        _log.critical(
+            "falha ao remover job %s apos exportacao; dado pessoal pode ter"
+            " ficado retido alem do TTL prometido",
+            job_id,
+            exc_info=True,
+        )
 
 
 def criar_app(config: Config | None = None, fila: Queue | None = None) -> FastAPI:
@@ -240,6 +398,90 @@ def criar_app(config: Config | None = None, fila: Queue | None = None) -> FastAP
                 status_code=status.HTTP_404_NOT_FOUND, detail="job nao encontrado"
             )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @aplicacao.post(
+        "/documentos/{job_id}/exportar",
+        response_class=FileResponse,
+        summary="Redige de verdade (Fase 4) e devolve o PDF pronto para publicação",
+    )
+    def exportar(request: Request, job_id: str, corpo: ExportarRequest) -> FileResponse:
+        """Fecha o ciclo: detecção → revisão humana → redação real → download.
+
+        Exige uma decisão (``TARJAR``/``PUBLICAR``) para CADA entidade do
+        resultado original — sem default por omissão. Uma entidade esquecida
+        na revisão não vira "publicar" silenciosamente só porque ninguém
+        mandou nada sobre ela: falta decisão é 400, com a lista de quais.
+        Uma tarja MANUAL (sem origem em detector) entra pelo mesmo corpo, com
+        ``bboxes`` próprio — é a única forma de o servidor saber onde ela
+        está, já que nunca a viu antes desta chamada.
+
+        A redação em si é ``redigir_pdf`` (Fase 4), sobre o ``original.pdf``
+        do job — nenhuma lógica de redação é duplicada aqui. Antes de servir
+        o arquivo, ``RelatorioRedacao.verificacao`` — o leitor independente
+        que reabre o resultado do zero e não confia no que a redação afirma —
+        precisa ter aprovado. Reprovado vira 500 com o vazamento: um
+        documento com dado pessoal ainda detectável não pode ser servido como
+        se estivesse pronto, mesmo que o arquivo exista em disco. O job
+        continua vivo nesse caso, para permitir nova tentativa ou inspeção.
+
+        Só pode ser chamado uma vez por job: depois de servir o download com
+        sucesso, o job inteiro é destruído (original, redigido, estado,
+        resultado) — consistente com a política de não-retenção. Uma segunda
+        chamada encontra 404, como qualquer job que já não existe mais.
+        """
+        armazenamento: Armazenamento = request.app.state.armazenamento
+        estado = armazenamento.obter(job_id)
+        if estado is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="job nao encontrado"
+            )
+        if estado.status is not JobStatus.PRONTO or estado.paginas is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"job ainda nao esta pronto (status={estado.status.value})",
+            )
+
+        caminho_original = armazenamento.caminho_pdf(job_id)
+        conhecidas = _entidades_conhecidas(caminho_original, estado.paginas)
+        paginas_validas = {p.numero for p in estado.paginas}
+
+        entidades_por_pagina, manuais_por_pagina = _montar_redacao(
+            corpo.decisoes, conhecidas, paginas_validas
+        )
+
+        caminho_saida = armazenamento.caminho_redigido(job_id)
+        relatorio = redigir_pdf(
+            caminho_original,
+            caminho_saida,
+            entidades_por_pagina,
+            redacoes_manuais_por_pagina=manuais_por_pagina,
+        )
+
+        if not relatorio.verificacao.aprovado:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "mensagem": (
+                        "a verificacao pos-redacao reprovou este documento — "
+                        "ele NAO deve ser considerado seguro para publicacao"
+                    ),
+                    "vazamentos": [
+                        {
+                            "origem": v.origem,
+                            "pagina": v.pagina,
+                            "tipo": v.entity.type.name if v.entity else None,
+                            "detalhe": v.detalhe,
+                        }
+                        for v in relatorio.verificacao.vazamentos
+                    ],
+                },
+            )
+
+        return FileResponse(
+            caminho_saida,
+            media_type="application/pdf",
+            background=BackgroundTask(_destruir_apos_exportar, armazenamento, job_id),
+        )
 
     return aplicacao
 

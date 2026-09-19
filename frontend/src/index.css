@@ -671,24 +671,3 @@ button {
   border-left: 3px solid rgb(var(--tarja-revisao));
   background: rgb(245 158 11 / 12%);
 }
-
-.faixa {
-  position: fixed;
-  left: 50%;
-  bottom: 24px;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  border-radius: 8px;
-  transform: translateX(-50%);
-  box-shadow: 0 6px 24px rgb(0 0 0 / 50%);
-  font-size: 13px;
-}
-
-.faixa--sucesso {
-  border: 1px solid #166534;
-  background: #14532d;
-  color: #dcfce7;
-}

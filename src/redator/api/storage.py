@@ -7,10 +7,12 @@ sobreviveria à arquitetura se o processamento fosse síncrono, que é
 exatamente o que a fila existe para não ser.
 
 **O que fica no disco, e o que não fica.** Ficam o PDF original
-(``original.pdf``) e o resultado (``resultado.json``), que contém os valores
-reais dos dados pessoais detectados. O **texto extraído nunca é gravado**:
-ele vive na memória do worker durante o processamento e morre com ele. Era o
-maior volume de dado pessoal em repouso e não havia por que persistir.
+(``original.pdf``), o resultado (``resultado.json``), que contém os valores
+reais dos dados pessoais detectados, e — só depois de ``POST .../exportar``
+(Fase 4) — o PDF redigido (``redigido.pdf``). O **texto extraído nunca é
+gravado**: ele vive na memória do worker durante o processamento e morre com
+ele. Era o maior volume de dado pessoal em repouso e não havia por que
+persistir.
 
 **Limitação aceita.** Não há bloqueio entre processos. Escritas são atômicas
 (arquivo temporário + ``os.replace``), então nunca se lê um JSON parcial, mas
@@ -41,6 +43,7 @@ _log = logging.getLogger(__name__)
 _NOME_PDF = "original.pdf"
 _NOME_ESTADO = "estado.json"
 _NOME_RESULTADO = "resultado.json"
+_NOME_REDIGIDO = "redigido.pdf"
 
 #: Tentativas de `shutil.rmtree` antes de desistir e levantar erro. Ver
 #: :func:`_remover_com_retentativa` — existe por causa de uma falha real e
@@ -136,6 +139,10 @@ class Armazenamento:
     def caminho_pdf(self, job_id: str) -> Path:
         """Onde está o PDF original. Não garante que exista."""
         return self._diretorio(job_id) / _NOME_PDF
+
+    def caminho_redigido(self, job_id: str) -> Path:
+        """Onde o PDF exportado (Fase 4) deve ser gravado. Não garante que exista."""
+        return self._diretorio(job_id) / _NOME_REDIGIDO
 
     def existe(self, job_id: str) -> bool:
         return (

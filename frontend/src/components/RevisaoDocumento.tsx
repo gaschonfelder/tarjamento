@@ -14,10 +14,11 @@ import {
   type PDFDocumentProxy,
 } from 'pdfjs-dist';
 import trabalhadorUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import type { BBox, JobResponse } from '../types';
+import { ErroApi, ExportacaoIncompleta, VerificacaoReprovada, exportarDocumento } from '../api/client';
+import type { BBox, EntidadeFaltando, JobResponse } from '../types';
 import {
   ESTADO_INICIAL,
-  montarPayload,
+  montarDecisoes,
   reduzir,
   resumir,
   type Modo,
@@ -38,6 +39,30 @@ interface Props {
   onDescartar: () => void;
 }
 
+/** `<nome original>_redigido.pdf` — a extensão original, se houver, não dobra. */
+function nomeExportado(nomeOriginal: string): string {
+  const semExtensao = nomeOriginal.replace(/\.pdf$/i, '') || 'documento';
+  return `${semExtensao}_redigido.pdf`;
+}
+
+/**
+ * Dispara o download de um blob no browser, sem navegar a página.
+ *
+ * O sandbox de artefatos bloqueia isso, mas esta é a aplicação real rodando
+ * no navegador do usuário, não um artefato — o padrão `<a download>` + URL de
+ * objeto é o jeito correto aqui.
+ */
+function baixar(blob: Blob, nomeArquivo: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = nomeArquivo;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export default function RevisaoDocumento({ job, arquivo, onDescartar }: Props) {
   const paginas = useMemo(() => job.paginas ?? [], [job.paginas]);
 
@@ -50,7 +75,9 @@ export default function RevisaoDocumento({ job, arquivo, onDescartar }: Props) {
     return Math.min(ESCALA_MAXIMA, Math.max(ESCALA_MINIMA, LARGURA_ALVO / primeira.largura));
   });
   const [resumoAberto, setResumoAberto] = useState(false);
-  const [consolidado, setConsolidado] = useState<number | null>(null);
+  const [exportando, setExportando] = useState(false);
+  const [erroExportacao, setErroExportacao] = useState<string | null>(null);
+  const [faltandoRevisao, setFaltandoRevisao] = useState<EntidadeFaltando[] | null>(null);
 
   // As tarjas nascem das páginas da API, uma vez.
   useEffect(() => {
@@ -95,14 +122,30 @@ export default function RevisaoDocumento({ job, arquivo, onDescartar }: Props) {
     setEscala(Math.min(ESCALA_MAXIMA, Math.max(ESCALA_MINIMA, Number(nova.toFixed(2)))));
   }
 
-  function confirmar() {
-    const payload = montarPayload(job.id, estado.tarjas);
-    // A exportação não existe no backend (Fase 3/4). O contrato fica no
-    // console para conferência — nenhuma chamada é feita.
-    console.info('[redator] payload de exportação consolidado:', payload);
-    console.info('[redator] JSON:', JSON.stringify(payload, null, 2));
-    setConsolidado(payload.tarjas.length);
-    setResumoAberto(false);
+  async function confirmar() {
+    setExportando(true);
+    setErroExportacao(null);
+    setFaltandoRevisao(null);
+    try {
+      const blob = await exportarDocumento(job.id, montarDecisoes(estado.tarjas));
+      baixar(blob, nomeExportado(arquivo.name));
+      // O job já foi destruído no servidor ao servir o download: só resta
+      // limpar o estado local e voltar para a tela de upload.
+      setResumoAberto(false);
+      onDescartar();
+    } catch (e) {
+      if (e instanceof ExportacaoIncompleta) {
+        setFaltandoRevisao(e.faltando);
+      } else if (e instanceof VerificacaoReprovada) {
+        setErroExportacao(e.message);
+      } else {
+        setErroExportacao(
+          e instanceof ErroApi ? e.message : 'Não consegui falar com a API para exportar.',
+        );
+      }
+    } finally {
+      setExportando(false);
+    }
   }
 
   if (erroPdf) {
@@ -196,30 +239,61 @@ export default function RevisaoDocumento({ job, arquivo, onDescartar }: Props) {
               <p className="modal__ok">Todas as tarjas sinalizadas foram revisadas.</p>
             )}
 
+            {faltandoRevisao && (
+              <div className="aviso aviso--erro">
+                <p>
+                  O servidor recusou a exportação: faltou decisão para{' '}
+                  <strong>{faltandoRevisao.length}</strong> tarja(s) que ele ainda conhece. Nada
+                  foi perdido — a revisão continua como estava.
+                </p>
+                <ul>
+                  {faltandoRevisao.map((f) => (
+                    <li key={f.entidade_id}>
+                      {f.type} · página {f.pagina + 1}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {erroExportacao && (
+              <div className="aviso aviso--erro">
+                <p>
+                  <strong>A exportação falhou — este documento NÃO deve ser considerado seguro.</strong>{' '}
+                  {erroExportacao}
+                </p>
+              </div>
+            )}
+
             <p className="modal__nota">
-              A exportação ainda não existe no backend. Confirmar consolida a lista e imprime o
-              payload no console do navegador.
+              Confirmar redige o documento de verdade no servidor e baixa o PDF pronto. O job é
+              destruído no servidor assim que o download começa — esta é a única chance de exportar
+              esta revisão.
             </p>
 
             <div className="modal__acoes">
-              <button type="button" className="botao" onClick={() => setResumoAberto(false)}>
+              <button
+                type="button"
+                className="botao"
+                onClick={() => setResumoAberto(false)}
+                disabled={exportando}
+              >
                 Voltar e revisar
               </button>
-              <button type="button" className="botao botao--primario" onClick={confirmar}>
-                {resumo.pendentes > 0 ? 'Confirmar mesmo assim' : 'Confirmar'}
+              <button
+                type="button"
+                className="botao botao--primario"
+                onClick={() => void confirmar()}
+                disabled={exportando}
+              >
+                {exportando
+                  ? 'Exportando…'
+                  : resumo.pendentes > 0
+                    ? 'Confirmar mesmo assim'
+                    : 'Confirmar'}
               </button>
             </div>
           </div>
-        </div>
-      )}
-
-      {consolidado !== null && (
-        <div className="faixa faixa--sucesso" role="status">
-          Lista consolidada: <strong>{consolidado}</strong> tarja(s). O payload que seria enviado
-          para exportação está no console do navegador.
-          <button type="button" className="botao botao--pequeno" onClick={() => setConsolidado(null)}>
-            Fechar
-          </button>
         </div>
       )}
     </div>

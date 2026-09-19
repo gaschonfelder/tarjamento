@@ -10,7 +10,7 @@
  * ajustada, origem — e aceita coisas que a API nunca produz, como uma tarja
  * manual sem confiança e sem texto por trás.
  */
-import type { BBox, EntidadeResponse, PaginaResponse } from '../types';
+import type { BBox, DecisaoEntidade, EntidadeResponse, PaginaResponse } from '../types';
 
 export type Origem = 'api' | 'manual';
 
@@ -220,51 +220,20 @@ export function resumir(tarjas: Tarja[]): Resumo {
 }
 
 /**
- * O que seria enviado para exportação quando a Fase 3/4 do backend existir.
+ * O corpo de `POST /documentos/{id}/exportar`: uma decisão por tarja, sem
+ * exceção — inclusive as rejeitadas (viram `PUBLICAR`) e as manuais.
  *
- * `texto_original` fica de FORA de propósito. A exportação precisa de onde
- * tarjar, não do que estava escrito ali, e o backend já tem o texto. Repetir
- * o dado pessoal num payload que vai para outro lugar seria espalhá-lo sem
- * ganhar nada.
+ * `entidade_id` é o `Tarja.id`: para uma tarja vinda da API é o mesmo id que
+ * o servidor gerou (`EntidadeResponse.id`); para uma manual é o id sintético
+ * de `novaManual`, que o servidor nunca viu — por isso toda tarja manual
+ * carrega `bboxes`, aceita ou rejeitada, mesmo quando `PUBLICAR` não vai
+ * usá-los: sem eles o servidor não tem como saber que o id é legítimo.
  */
-export interface PayloadExportacao {
-  job_id: string;
-  gerado_em: string;
-  resumo: Resumo;
-  tarjas: {
-    id: string;
-    type: string;
-    pagina: number;
-    bboxes: BBox[];
-    origem: Origem;
-    confidence: number | null;
-    context: string | null;
-    requires_review: boolean;
-    ajustada: boolean;
-  }[];
-  descartadas: { id: string; type: string; pagina: number }[];
-}
-
-export function montarPayload(jobId: string, tarjas: Tarja[]): PayloadExportacao {
-  return {
-    job_id: jobId,
-    gerado_em: new Date().toISOString(),
-    resumo: resumir(tarjas),
-    tarjas: tarjas
-      .filter((t) => !t.rejeitada)
-      .map((t) => ({
-        id: t.id,
-        type: t.type,
-        pagina: t.pagina,
-        bboxes: t.bboxes,
-        origem: t.origem,
-        confidence: t.confidence,
-        context: t.context,
-        requires_review: t.requiresReview,
-        ajustada: t.ajustada,
-      })),
-    descartadas: tarjas
-      .filter((t) => t.rejeitada)
-      .map((t) => ({ id: t.id, type: t.type, pagina: t.pagina })),
-  };
+export function montarDecisoes(tarjas: Tarja[]): DecisaoEntidade[] {
+  return tarjas.map((t) => ({
+    entidade_id: t.id,
+    pagina: t.pagina,
+    acao: t.rejeitada ? 'PUBLICAR' : 'TARJAR',
+    ...(t.origem === 'manual' ? { bboxes: t.bboxes } : {}),
+  }));
 }

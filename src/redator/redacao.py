@@ -126,6 +126,12 @@ __all__ = ["RelatorioRedacao", "redigir_pdf"]
 
 _log = logging.getLogger(__name__)
 
+#: ``(x0, y0, x1, y1)`` em pontos da página. Mesmo espaço de
+#: ``bboxes_for_span`` — inclusive para a redação manual, que não passa por
+#: ele: a área já vem pronta de quem chama (a interface de revisão), sem
+#: nenhum ``Entity`` por trás para localizá-la a partir de um span de texto.
+BBox = tuple[float, float, float, float]
+
 #: Chaves de ``Document.metadata`` que não são campos reais do dicionário
 #: ``/Info`` — ``format`` é derivado da versão do PDF, ``encryption`` do
 #: estado de criptografia. Contá-las como "metadado presente" inflaria o
@@ -145,6 +151,10 @@ class RelatorioRedacao:
     removido — não se o passo rodou (ele sempre roda, incondicionalmente):
     ``anexos_removidos == 0`` diz "não havia anexo", não "a limpeza falhou".
 
+    ``total_redacoes_manuais`` conta as áreas de ``redacoes_manuais_por_pagina``
+    (ver :func:`redigir_pdf`) — bboxes marcados na interface sem ``Entity``
+    por trás, por isso fora de ``total_entidades_tarjadas``.
+
     ``verificacao`` é o que um leitor independente achou ao reabrir o arquivo
     — os campos acima são o que a redação AFIRMA; este é o que foi CONFERIDO.
     Se os dois discordarem, vale ``verificacao``.
@@ -152,6 +162,7 @@ class RelatorioRedacao:
 
     total_entidades_tarjadas: int
     total_entidades_publicadas: int
+    total_redacoes_manuais: int
     paginas_processadas: int
     hash_original: str
     hash_resultado: str
@@ -272,6 +283,8 @@ def redigir_pdf(
     caminho_entrada: str | Path,
     caminho_saida: str | Path,
     entidades_por_pagina: dict[int, list[EntidadeComAcao]],
+    *,
+    redacoes_manuais_por_pagina: dict[int, list[BBox]] | None = None,
 ) -> RelatorioRedacao:
     """Grava em ``caminho_saida`` uma cópia com toda entidade TARJAR removida.
 
@@ -283,6 +296,15 @@ def redigir_pdf(
     default do PyMuPDF; o porquê de cada um está no docstring do módulo.
     Entidades com ``acao == PUBLICAR`` são ignoradas: nem marcadas, nem
     contadas como tarjadas.
+
+    ``redacoes_manuais_por_pagina`` são áreas marcadas à mão na interface de
+    revisão, sem ``Entity`` por trás — por isso bboxes diretos, e não um span
+    de texto: não há offset para pedir a ``bboxes_for_span``, porque não
+    houve detector nenhum. Cada uma vira o mesmo ``add_redact_annot`` das
+    entidades reais, na mesma página, no mesmo ``apply_redactions`` — uma
+    passada só, para a verificação de saída conferir o estado final de
+    verdade, não um resultado intermediário. Uma página que só tem redação
+    manual (nenhuma entidade real) ainda é processada.
 
     O documento é salvo com reescrita completa (``garbage=4, deflate=True,
     clean=True``), não incremental — um save incremental manteria a versão
@@ -308,18 +330,21 @@ def redigir_pdf(
         )
 
     extraido = {pagina.page: pagina for pagina in extract_pdf(entrada).pages}
+    manuais = redacoes_manuais_por_pagina or {}
+    paginas_numeros = sorted(set(entidades_por_pagina) | set(manuais))
 
     total_tarjadas = 0
     total_publicadas = 0
+    total_manuais = 0
 
     documento = pymupdf.open(str(entrada))
     try:
-        for numero, entidades in entidades_por_pagina.items():
+        for numero in paginas_numeros:
             if numero not in extraido:
                 raise IndexError(f"pagina {numero} nao existe em {entrada}")
             pagina_extraida = extraido[numero]
             pagina_pdf = documento[numero]
-            for entidade_com_acao in entidades:
+            for entidade_com_acao in entidades_por_pagina.get(numero, []):
                 if entidade_com_acao.acao is AcaoRedacao.PUBLICAR:
                     total_publicadas += 1
                     continue
@@ -328,6 +353,9 @@ def redigir_pdf(
                 for bbox in caixas:
                     pagina_pdf.add_redact_annot(pymupdf.Rect(*bbox), fill=(0, 0, 0))
                 total_tarjadas += 1
+            for bbox in manuais.get(numero, []):
+                pagina_pdf.add_redact_annot(pymupdf.Rect(*bbox), fill=(0, 0, 0))
+                total_manuais += 1
             pagina_pdf.apply_redactions(
                 images=pymupdf.PDF_REDACT_IMAGE_PIXELS,  # type: ignore[attr-defined]
                 graphics=pymupdf.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED,  # type: ignore[attr-defined]
@@ -365,7 +393,8 @@ def redigir_pdf(
     return RelatorioRedacao(
         total_entidades_tarjadas=total_tarjadas,
         total_entidades_publicadas=total_publicadas,
-        paginas_processadas=len(entidades_por_pagina),
+        total_redacoes_manuais=total_manuais,
+        paginas_processadas=len(paginas_numeros),
         hash_original=_sha256_arquivo(entrada),
         hash_resultado=_sha256_arquivo(saida),
         metadados_removidos=metadados_removidos,

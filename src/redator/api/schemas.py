@@ -20,7 +20,10 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 __all__ = [
+    "AcaoDecisao",
+    "DecisaoEntidade",
     "EntidadeResponse",
+    "ExportarRequest",
     "JobResponse",
     "JobStatus",
     "PaginaResponse",
@@ -81,3 +84,40 @@ class JobResponse(BaseModel):
     erro: str | None = None
     paginas: list[PaginaResponse] | None = None
     expira_em: datetime
+
+
+class AcaoDecisao(str, Enum):
+    """A decisão final do revisor para uma entidade. Espelha ``perfil.AcaoRedacao``."""
+
+    TARJAR = "TARJAR"
+    PUBLICAR = "PUBLICAR"
+
+
+class DecisaoEntidade(BaseModel):
+    """A decisão do revisor sobre uma tarja, para ``POST .../exportar``.
+
+    ``entidade_id`` é o mesmo ``EntidadeResponse.id`` do resultado original —
+    exceto para uma tarja MANUAL, criada só na interface, sem detector nem
+    ``id`` gerado pelo servidor por trás.
+
+    ``bboxes`` só é usado (e é obrigatório) quando ``entidade_id`` não
+    corresponde a nenhuma entidade do resultado original: é a única forma de
+    o servidor saber onde está uma área que ele nunca viu, porque nasceu de
+    um retângulo desenhado na tela. Para uma entidade que já veio do
+    resultado, ``bboxes`` é ignorado — o servidor já sabe onde ela está.
+    """
+
+    entidade_id: str
+    pagina: int
+    acao: AcaoDecisao
+    bboxes: list[BBox] | None = None
+
+
+class ExportarRequest(BaseModel):
+    """O corpo de ``POST /documentos/{job_id}/exportar``.
+
+    Uma decisão por entidade do resultado original — sem exceção, sem
+    default por omissão: ver o docstring do endpoint para o porquê.
+    """
+
+    decisoes: list[DecisaoEntidade]
