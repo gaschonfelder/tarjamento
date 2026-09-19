@@ -97,9 +97,14 @@ caso de uso real que o justifique agora. Fica como risco documentado, não
 como lacuna silenciosa: se um documento com camadas aparecer em produção,
 este módulo não é a defesa contra dado escondido nelas.
 
-**O que este módulo ainda NÃO faz.** Não faz verificação pós-redação
-(reabrir o resultado e confirmar que nada sobrou) — fica para a próxima
-tarefa. Também não decide política: recebe a decisão já pronta, em
+**Verificação pós-redação, automática.** Depois de salvar, ``redigir_pdf``
+entrega o próprio resultado a ``redator.verificacao.verificar_redacao``, que
+reabre o arquivo do zero e procura o que sobrou — sem confiar em nada que
+este módulo afirma ter feito. O resultado vai em
+``RelatorioRedacao.verificacao``. Reprovado não apaga o arquivo (descartar é
+decisão de quem chama), mas vira log CRÍTICO com cada vazamento.
+
+Este módulo também não decide política: recebe a decisão já pronta, em
 ``EntidadeComAcao``.
 """
 
@@ -112,8 +117,10 @@ from pathlib import Path
 
 import pymupdf
 
+from .detectors import TODOS_DETECTORES
 from .pdf import bboxes_for_span, extract_pdf
 from .perfil import AcaoRedacao, EntidadeComAcao
+from .verificacao import RelatorioVerificacao, verificar_redacao
 
 __all__ = ["RelatorioRedacao", "redigir_pdf"]
 
@@ -137,6 +144,10 @@ class RelatorioRedacao:
     Os quatro campos de limpeza de documento registram o que *havia* e foi
     removido — não se o passo rodou (ele sempre roda, incondicionalmente):
     ``anexos_removidos == 0`` diz "não havia anexo", não "a limpeza falhou".
+
+    ``verificacao`` é o que um leitor independente achou ao reabrir o arquivo
+    — os campos acima são o que a redação AFIRMA; este é o que foi CONFERIDO.
+    Se os dois discordarem, vale ``verificacao``.
     """
 
     total_entidades_tarjadas: int
@@ -148,6 +159,7 @@ class RelatorioRedacao:
     acroform_removido: bool
     anexos_removidos: int
     javascript_removido: bool
+    verificacao: RelatorioVerificacao
 
 
 def _sha256_arquivo(caminho: Path) -> str:
@@ -280,6 +292,13 @@ def redigir_pdf(
     ``caminho_saida`` tem de ser um arquivo novo: entrada e saída resolvendo
     para o mesmo caminho é erro, e nada é tocado antes dessa checagem — nunca
     se processa in-place.
+
+    Ao final, o arquivo salvo passa por ``verificar_redacao`` com
+    ``TODOS_DETECTORES`` — a assinatura pública não recebe detectores, e
+    verificar com o conjunto completo é o lado seguro: só pode achar mais.
+    Reprovado: o arquivo continua gravado e o relatório é devolvido
+    normalmente, mas cada vazamento é logado como CRÍTICO — é um documento
+    com dado pessoal não removido prestes a ser tratado como pronto.
     """
     entrada = Path(caminho_entrada)
     saida = Path(caminho_saida)
@@ -330,6 +349,19 @@ def redigir_pdf(
     finally:
         documento.close()
 
+    verificacao = verificar_redacao(saida, list(TODOS_DETECTORES), entidades_por_pagina)
+    if not verificacao.aprovado:
+        for vazamento in verificacao.vazamentos:
+            _log.critical(
+                "verificacao pos-redacao REPROVOU %s: origem=%s pagina=%s"
+                " tipo=%s — %s",
+                saida,
+                vazamento.origem,
+                vazamento.pagina,
+                vazamento.entity.type.name if vazamento.entity else None,
+                vazamento.detalhe,
+            )
+
     return RelatorioRedacao(
         total_entidades_tarjadas=total_tarjadas,
         total_entidades_publicadas=total_publicadas,
@@ -340,4 +372,5 @@ def redigir_pdf(
         acroform_removido=acroform_removido,
         anexos_removidos=anexos_removidos,
         javascript_removido=javascript_removido,
+        verificacao=verificacao,
     )

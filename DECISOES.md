@@ -629,3 +629,57 @@ não como lacuna silenciosa: se um PDF com camadas aparecer em produção,
 `redigir_pdf` não é, hoje, defesa contra dado pessoal escondido nelas — e
 `_verificar_optional_content` loga um aviso (nível `WARNING`) sempre que o
 documento tem qualquer OCG, exatamente para essa lacuna não ficar muda.
+
+### 4. Verificação pós-redação independente, e as três lacunas que ela expôs
+
+`redator.verificacao.verificar_redacao` reabre o PDF de saída do zero e
+procura o que sobrou em sete canais (texto, metadados, AcroForm, anexos,
+JavaScript, Optional Content), sem parar no primeiro. `redigir_pdf` a chama
+sozinho depois de salvar e devolve o resultado em
+`RelatorioRedacao.verificacao`. Reprovado não apaga o arquivo (descartar é
+de quem chama), mas cada vazamento vira log `CRITICAL`.
+
+**Independência é regra de desenho, e virou teste.** A verificação não
+importa nada de `redator.redacao` — `test_verificacao_nao_importa_nada_de_redacao`
+lê o fonte e falha se isso mudar. O motivo apareceu na prática: a tarefa
+pedia para reaproveitar a técnica de varredura de JavaScript da redação, e
+essa técnica é justamente a que tem ponto cego. Reaproveitá-la teria deixado
+a verificação cega ao mesmo bug. As técnicas de detecção são, de propósito,
+diferentes e mais amplas que as de remoção.
+
+**As três lacunas em `redacao.py`, todas verificadas com `redigir_pdf` real:**
+
+1. **JavaScript inline sobrevive.** A remoção procura objetos cujo `/S` é
+   `/JavaScript` no nível do xref. Uma ação aninhada em outro dicionário (ex.:
+   o `/AA` de uma página) não é xref próprio, escapa, e o relatório ainda diz
+   `javascript_removido=False`. A verificação lê o fonte de todo objeto e acusa
+   `/JS` com conteúdo, onde quer que esteja.
+2. **Anexo por anotação `FileAttachment` sobrevive.** A remoção limpa o name
+   tree de anexos (`embfile_*`); a anotação é outro mecanismo, e
+   `embfile_count()` dá zero com ela presente. O critério literal "`embfile_count()
+   == 0`" aprovaria o documento. A verificação checa os dois.
+3. **`/Info` dentro do catálogo sobrevive.** Fora do lugar padrão (que é o
+   trailer), mas o MuPDF grava ali `/Producer` em todo PDF que cria — toda
+   fixture do gerador tem. `doc.metadata` não enxerga, e a limpeza não o toca.
+   Hoje só carrega a assinatura da biblioteca, não dado do documento. A
+   verificação tolera `/Producer` sozinho ali (acusar seria falso positivo em
+   todo PDF gerado pelo PyMuPDF) e acusa qualquer outra chave.
+
+**Não corrigidas nesta tarefa**, que era de verificação: ficam acusadas, não
+silenciosas. Um documento real com qualquer uma delas sai de `redigir_pdf`
+com `verificacao.aprovado == False` e log `CRITICAL`. Os testes dessas três
+verificam `verificar_redacao` direto sobre PDF montado à mão, e não via
+`redigir_pdf` — assim não codificam o bug da redação e não quebram quando ele
+for corrigido.
+
+**Limites do canal de texto, aceitos:** só se acusa o que um detector
+reconhece (meio CPF cortado por uma caixa mal posicionada não casa com
+detector nenhum), e só entidade que corresponde a uma esperada TARJAR (mesmo
+tipo e mesmo texto sem separador). A correspondência ignora página e posição
+de propósito: o mesmo dado pessoal achado em qualquer página é vazamento.
+
+**Os testes não são vácuos — conferido por sabotagem.** Cada um dos canais,
+mais o filtro de PUBLICAR, a regex de JS e a checagem de `FileAttachment`,
+foi anulado um de cada vez no código da verificação: todas as nove sabotagens
+quebraram ao menos um teste. Os dois PDFs manuais da ata (`pdf_manual/`) saem
+aprovados, com 17 entidades tarjadas cada.
